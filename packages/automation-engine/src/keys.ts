@@ -64,6 +64,23 @@ export function patternSpecificity(pattern: string): number {
   return canonicalPattern(pattern).split('/').filter((segment) => segment && segment !== '{param}').length;
 }
 
+/**
+ * Whether two declared route patterns could both match the same concrete path — the
+ * pattern-vs-pattern generalisation of `routeMatches`'s path-vs-pattern check. Two patterns
+ * collide when every segment position is either identical literal text or a `{param}` on
+ * at least one side (a wildcard accepts whatever the other pattern names there).
+ */
+export function patternsOverlap(a: string, b: string): boolean {
+  const left = canonicalPattern(a).split('/');
+  const right = canonicalPattern(b).split('/');
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] === '{param}' || right[index] === '{param}') continue;
+    if (left[index] !== right[index]) return false;
+  }
+  return true;
+}
+
 /** Text comparison used for labels and accessible names: case, punctuation and spacing insensitive. */
 export function normalizeText(value: string | null | undefined): string {
   return String(value ?? '')

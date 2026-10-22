@@ -101,6 +101,17 @@ export interface SemanticElement {
   autocomplete?: string | null;
   /** The name of the radio group, checkbox group or fieldset the element sits in: what a Flow calls the field, as opposed to the choice. */
   group?: string | null;
+  /** The HTML `required` attribute, for a field that has one (input, select, textarea). Absent means not applicable. */
+  required?: boolean;
+  /** Whether the field currently holds a value, without exposing what it is — never the value itself, only the fact. Absent means not applicable. */
+  populated?: boolean;
+  /**
+   * Which `<form>` on the page this element sits in, as an index stable within one snapshot; null when it is in
+   * none. The browser's own constraint validation (the "please fill out this field" a required, empty input
+   * blocks a submit with) only ever fires inside a `<form>`, so this is what lets a required field left out of a
+   * step's declared inputs be recognised as *this* step's problem rather than some unrelated part of the page.
+   */
+  formIndex?: number | null;
   /**
    * How the element is rendered. Absent when the adapter was not asked to measure (and on every snapshot a test
    * writes by hand), so nothing that reads it may require it: a decision that cannot be made without geometry

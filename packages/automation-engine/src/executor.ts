@@ -591,6 +591,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       // second one is the more actionable: something is covering the control a person is meant to press.
       const stopReason = DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE'
         : resolved.reason === 'CONTROL_OBSCURED' ? 'CONTROL_OBSCURED'
+        : resolved.reason === 'REQUIRED_FIELD_NOT_DECLARED' ? 'REQUIRED_FIELD_NOT_DECLARED'
         : 'EXPECTED_TRANSITION_NOT_FOUND';
       emit('QA_AUTOMATION_ACTION_BLOCKED', { reason: resolved.reason, transitionId: next.id, action: next.action, from: next.from, expectedState: next.to, detail: resolved.detail });
       return finish(stopReason, resolved.detail);
@@ -659,6 +660,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
           return finish(
             DATA_FAILURE_REASONS.has(resolved.reason) ? 'TEST_DATA_UNAVAILABLE'
               : resolved.reason === 'CONTROL_OBSCURED' ? 'CONTROL_OBSCURED'
+              : resolved.reason === 'REQUIRED_FIELD_NOT_DECLARED' ? 'REQUIRED_FIELD_NOT_DECLARED'
               : 'EXPECTED_TRANSITION_NOT_FOUND',
             resolved.detail,
           );

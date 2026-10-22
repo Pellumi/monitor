@@ -1311,6 +1311,9 @@ importers:
       '@tellann/authz':
         specifier: workspace:*
         version: link:../../packages/authz
+      '@tellann/automation-engine':
+        specifier: workspace:*
+        version: link:../../packages/automation-engine
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db

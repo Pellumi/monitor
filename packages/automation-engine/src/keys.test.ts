@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { canonicalPattern, normalizeStateKey, normalizeText, patternSpecificity, pathOnly, routeMatches } from './keys';
+import { canonicalPattern, normalizeStateKey, normalizeText, patternsOverlap, patternSpecificity, pathOnly, routeMatches } from './keys';
 
 test('state keys match the boundary evaluator exactly', () => {
   // Reference values produced by `normalizeQaFlowKey` in packages/db/src/qa-flow-boundary.ts.
@@ -37,6 +37,14 @@ test('a literal segment is more specific than a parameter', () => {
   assert.ok(patternSpecificity('/courses/new') > patternSpecificity('/courses/{param}'));
   assert.equal(canonicalPattern('/orders/<int:pk>/'), '/orders/{param}');
   assert.equal(pathOnly('https://x.test/a/b/?q=1#h'), '/a/b');
+});
+
+test('two patterns overlap when a wildcard could stand in for the other\'s literal segment', () => {
+  assert.equal(patternsOverlap('/courses/{param}', '/courses/new'), true);
+  assert.equal(patternsOverlap('/courses/{param}', '/courses/{param}'), true);
+  assert.equal(patternsOverlap('/courses/new', '/courses/edit'), false, 'two different literals never overlap');
+  assert.equal(patternsOverlap('/courses/{param}', '/courses/{param}/exams'), false, 'different segment counts never overlap');
+  assert.equal(patternsOverlap('/Courses/{param}', '/courses/new'), true, 'case-insensitive like the canonicaliser');
 });
 
 test('label comparison ignores case, punctuation and spacing', () => {

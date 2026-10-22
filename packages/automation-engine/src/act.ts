@@ -36,6 +36,8 @@ export type StepFailureReason =
   | 'CONTROL_OBSCURED'
   | 'DATA_UNAVAILABLE'
   | 'FIELD_NOT_FOUND'
+  /** A required, empty field shares the control's form and this step's declared inputs leave it out. Submitting would be rejected by the browser before anything is sent. */
+  | 'REQUIRED_FIELD_NOT_DECLARED'
   /** The field offers a fixed set of choices and the data set's value is not one of them. */
   | 'OPTION_UNAVAILABLE'
   /** A date or time the field cannot take in the format it wants. */
@@ -137,6 +139,14 @@ export function resolveStep(snapshot: SemanticSnapshot, input: StepInput): Resol
     fills.push(planned.fill);
   }
 
+  const leftOut = undeclaredRequiredField(snapshot.elements, ranked.best.element, fills);
+  if (leftOut) {
+    return {
+      ok: false, reason: 'REQUIRED_FIELD_NOT_DECLARED',
+      detail: `Pressing ${input.label} would submit a form that also requires "${leftOut}", which this step does not declare as a field to fill. The browser would reject the submit before anything was sent.`,
+    };
+  }
+
   return { ok: true, controlRef: ranked.best.element.ref, method: ranked.best.method, score: ranked.best.score, fills, ...(resolvedBy ? { resolvedBy } : {}) };
 }
 
@@ -173,6 +183,35 @@ function actionFor(fill: PlannedFill): AutomationAction {
 // -- fields -------------------------------------------------------------------
 
 const DATE_INPUT_TYPES = new Set(['date', 'datetime-local', 'time', 'month', 'week']);
+const FIELD_TAGS = new Set(['input', 'select', 'textarea']);
+const NON_FIELD_INPUT_TYPES = new Set(['submit', 'button', 'reset', 'image', 'hidden', 'file']);
+const isChecklikeField = (element: SemanticElement) =>
+  element.inputType === 'checkbox' || element.inputType === 'radio' || element.role === 'checkbox' || element.role === 'radio' || element.role === 'switch';
+
+/**
+ * A required, empty field sharing the control's `<form>` that this step's declared inputs leave out, named for
+ * the failure detail — or null when there is none.
+ *
+ * Scoped to the control's own form, and only when it is in one at all: the browser's native constraint
+ * validation (the "please fill out this field" an empty `required` input blocks a submit with) can only ever
+ * fire inside a `<form>`, so a required field anywhere else on the page is some other step's business, not this
+ * one's. Without this, a Flow whose declared inputs for a login step forgot the password field would still look
+ * resolved: the run would type the email, click Login, watch the browser silently refuse to submit, and retry
+ * the same thing forever rather than naming what the declaration left out.
+ */
+function undeclaredRequiredField(elements: SemanticElement[], control: SemanticElement, fills: PlannedFill[]): string | null {
+  if (control.formIndex == null) return null;
+  const declared = new Set(fills.map((fill) => fill.ref));
+  const left = elements.find((element) =>
+    element.formIndex === control.formIndex
+    && element.visible && element.enabled
+    && element.required === true
+    && !declared.has(element.ref)
+    && FIELD_TAGS.has(element.tag)
+    && !(element.inputType && NON_FIELD_INPUT_TYPES.has(element.inputType))
+    && (isChecklikeField(element) ? element.checked !== true : element.populated !== true));
+  return left ? (left.label ?? left.name ?? left.fieldName ?? 'a field') : null;
+}
 
 function planFill(
   field: FormInput,

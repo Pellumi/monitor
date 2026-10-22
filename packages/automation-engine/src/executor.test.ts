@@ -228,6 +228,36 @@ test('missing run data stops the run before the action that needs it', async () 
   assert.equal(app.actions.filter((a) => a.kind === 'FILL').length, 0);
 });
 
+test('a required field the step forgot to declare stops the run instead of retrying a submit the browser would refuse', async () => {
+  const app = lmsApp({
+    pages: {
+      details: {
+        path: '/courses/7', sdkState: 'course_details',
+        elements: [element({ ref: 'e-create', name: 'Create Exam', role: 'button' })],
+      },
+      form: {
+        path: '/courses/7/exams/new', sdkState: 'exam_form',
+        elements: [
+          element({ ref: 'e-title', tag: 'input', role: 'textbox', label: 'Title', fieldName: 'title', name: 'Title', formIndex: 0 }),
+          // Declared nowhere in the contract's inputs for t-submit — exactly the gap the check exists for.
+          element({ ref: 'e-password', tag: 'input', inputType: 'password', role: 'textbox', label: 'Password', fieldName: 'password', name: 'Password', required: true, formIndex: 0 }),
+          element({ ref: 'e-save', name: 'Save exam', testId: 'submit-exam', role: 'button', formIndex: 0 }),
+          element({ ref: 'e-invalid', name: 'Submit invalid', role: 'button' }),
+        ],
+      },
+      created: { path: '/courses/7/exams/42', sdkState: 'exam_created', elements: [] },
+      error: { path: '/courses/7/exams/error', sdkState: 'exam_error', elements: [] },
+    },
+  });
+  const result = await runAutomation(app, config());
+  assert.equal(result.stopReason, 'REQUIRED_FIELD_NOT_DECLARED');
+  assert.match(result.detail ?? '', /Password/);
+  // The run gets as far as the form (one click, to reach it) but the submit itself is never attempted:
+  // no field is filled and "Save exam" is never clicked, the same as a missing data value.
+  assert.deepEqual(clicks(app), ['e-create']);
+  assert.equal(app.actions.filter((a) => a.kind === 'FILL').length, 0);
+});
+
 test('secret run data is typed but flagged so it can be kept out of evidence', async () => {
   const contract: ExecutableContract = {
     ...lmsContract(),

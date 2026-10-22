@@ -18,6 +18,7 @@ import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tel
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow } from './flow-domain';
+import { buildReviewHash, runStaticSustainabilityChecks } from './sustainability-review';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
 
@@ -914,7 +915,7 @@ async function loadCanonicalFlow(applicationId: string, flowId: string) {
   });
 }
 
-async function publishCanonicalFlow(applicationId: string, flowId: string, publishedById?: string) {
+async function publishCanonicalFlow(applicationId: string, flowId: string, publishedById?: string, acknowledgedReviewId?: string) {
   const flow = await loadCanonicalFlow(applicationId, flowId);
   if (!flow) return { status: 404 as const, body: { error: 'FLOW_NOT_FOUND' } };
   if (flow.lifecycleStatus !== 'DRAFT') {
@@ -956,6 +957,7 @@ async function publishCanonicalFlow(applicationId: string, flowId: string, publi
         diagramProjectionMetadata: diagrams as any,
         publishedAt: new Date(),
         publishedById: publishedById ?? null,
+        sustainabilityReviewId: acknowledgedReviewId ?? null,
       },
       create: {
         graphId: flow.id,
@@ -965,6 +967,7 @@ async function publishCanonicalFlow(applicationId: string, flowId: string, publi
         diagramRendererVersion: '1.0',
         diagramProjectionMetadata: diagrams as any,
         publishedById: publishedById ?? null,
+        sustainabilityReviewId: acknowledgedReviewId ?? null,
         expectedStateCount: expanded.states.length,
         expectedTransitionCount: expanded.transitions.length,
       },
@@ -1231,8 +1234,74 @@ app.post('/v1/applications/:appId/flows/:flowId/validate', async (req: Request, 
 });
 
 app.post('/v1/applications/:appId/flows/:flowId/publish', async (req: AuthenticatedRequest, res: Response) => {
-  const result = await publishCanonicalFlow(req.params.appId, req.params.flowId, req.user?.id);
+  const acknowledgedReviewId = typeof req.body?.acknowledgedReviewId === 'string' ? req.body.acknowledgedReviewId : undefined;
+  const result = await publishCanonicalFlow(req.params.appId, req.params.flowId, req.user?.id, acknowledgedReviewId);
   return res.status(result.status).json(result.body);
+});
+
+/**
+ * A pre-publish Flow Sustainability Review: the advisory half of readiness, as distinct from
+ * `validateFlow`'s hard-blocking structural checks above. Nothing here gates `/publish` — a
+ * caller may still publish without ever requesting a review, or without acknowledging one.
+ *
+ * Cached by `buildReviewHash` (deliberately broader than `graphRevisionHash`: it also covers
+ * each node/edge's declared `expectedInput`, so fixing a missing declared field — the exact
+ * class of bug this review exists to catch — invalidates the cache). A repeated publish
+ * attempt on an unchanged draft returns the same row rather than re-running checks.
+ *
+ * Phase A only: the free, deterministic checks (criteria 1's reachability/dead-ends, 3's
+ * route collisions, 4's naming pre-check). The AI-judgment findings (criteria 2's lifted
+ * mapping rationale, 4's narrative) and the live coverage walk (criterion 5) are a follow-up;
+ * this endpoint always reports `entitled: false` until that lands.
+ */
+app.post('/v1/applications/:appId/flows/:flowId/sustainability-review', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId } = req.params;
+  const flow = await loadCanonicalFlow(appId, flowId);
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+
+  const reviewHash = buildReviewHash(flow.nodes as any, flow.edges as any);
+  const cached = await prisma.flowSustainabilityReview.findUnique({
+    where: { flowId_reviewHash: { flowId, reviewHash } },
+    include: { findings: true },
+  });
+  if (cached) return res.json({ review: cached, locked: null });
+
+  const findings = runStaticSustainabilityChecks(flow.nodes as any, flow.edges as any);
+  const review = await prisma.flowSustainabilityReview.create({
+    data: {
+      flowId, applicationId: appId, graphVersion: flow.version, draftSeq: flow.draftSeq, reviewHash,
+      status: 'STATIC_COMPLETE', entitled: false, requiresDesktopWalk: true,
+      requestedById: req.user?.id ?? null,
+      findings: { create: findings.map((finding) => ({
+        criterion: finding.criterion, code: finding.code, severity: finding.severity, message: finding.message,
+        nodeIds: finding.nodeIds, edgeIds: finding.edgeIds, source: finding.source,
+      })) },
+    },
+    include: { findings: true },
+  });
+  return res.status(201).json({ review, locked: null });
+});
+
+app.get('/v1/applications/:appId/flows/:flowId/sustainability-review/:reviewId', async (req: Request, res: Response) => {
+  const { appId, flowId, reviewId } = req.params;
+  const review = await prisma.flowSustainabilityReview.findFirst({
+    where: { id: reviewId, flowId, applicationId: appId },
+    include: { findings: true },
+  });
+  if (!review) return res.status(404).json({ error: 'SUSTAINABILITY_REVIEW_NOT_FOUND' });
+  return res.json({ review });
+});
+
+app.post('/v1/applications/:appId/flows/:flowId/sustainability-review/:reviewId/acknowledge', async (req: AuthenticatedRequest, res: Response) => {
+  const { appId, flowId, reviewId } = req.params;
+  const existing = await prisma.flowSustainabilityReview.findFirst({ where: { id: reviewId, flowId, applicationId: appId } });
+  if (!existing) return res.status(404).json({ error: 'SUSTAINABILITY_REVIEW_NOT_FOUND' });
+  const review = await prisma.flowSustainabilityReview.update({
+    where: { id: reviewId },
+    data: { acknowledgedBy: req.user?.id ?? null, acknowledgedAt: new Date() },
+    include: { findings: true },
+  });
+  return res.json({ review });
 });
 
 // Accept an AI-generated draft flow (from an uploaded document): it becomes a

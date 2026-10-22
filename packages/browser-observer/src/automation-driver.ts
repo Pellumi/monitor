@@ -560,6 +560,23 @@ export function extractSemantic({ maxElements, measure }: { maxElements: number;
     && el.getAttribute('aria-disabled') !== 'true'
     && !el.closest('fieldset[disabled]');
 
+  /** The `required` property, for the three elements that have one. Undefined (not false) for anything else. */
+  const requiredOf = (el: Element): boolean | undefined => {
+    const tag = el.tagName.toLowerCase();
+    return tag === 'input' || tag === 'select' || tag === 'textarea' ? (el as HTMLInputElement).required === true : undefined;
+  };
+  /** Whether a text-like or choice field currently holds a value — a fact, never the value itself. Undefined for a choice/file field, which have their own way of saying this (`checked`, `options`). */
+  const populatedOf = (el: Element): boolean | undefined => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === 'textarea' || tag === 'select') return (el as HTMLTextAreaElement | HTMLSelectElement).value.length > 0;
+    if (tag === 'input') {
+      const type = (el as HTMLInputElement).type;
+      if (['checkbox', 'radio', 'file', 'submit', 'button', 'reset', 'image', 'hidden'].includes(type)) return undefined;
+      return (el as HTMLInputElement).value.length > 0;
+    }
+    return undefined;
+  };
+
   const checkedOf = (el: Element): boolean | null => {
     const tag = el.tagName.toLowerCase();
     if (tag === 'input') {
@@ -668,6 +685,13 @@ export function extractSemantic({ maxElements, measure }: { maxElements: number;
     '[data-testid]', '[data-test-id]', '[data-test]', '[data-tellann-action]',
   ].join(',');
 
+  // Indexed once per extraction, stably: what `formIndex` on an element refers to.
+  const forms = Array.from(document.querySelectorAll('form'));
+  const formIndexOf = (el: Element): number | null => {
+    const form = el.closest('form');
+    return form ? forms.indexOf(form) : null;
+  };
+
   const elements: Extracted[] = [];
   const seenCounts = new Map<string, number>();
   for (const el of Array.from(document.querySelectorAll(selector))) {
@@ -711,6 +735,9 @@ export function extractSemantic({ maxElements, measure }: { maxElements: number;
       popup: el.getAttribute('aria-haspopup'),
       autocomplete: el.getAttribute('autocomplete'),
       group: groupOf(el),
+      required: requiredOf(el),
+      populated: populatedOf(el),
+      formIndex: formIndexOf(el),
       ...(measure ? { geometry: measureOf(el) } : {}),
       signature: `${signatureBase}#${occurrence}`,
     });

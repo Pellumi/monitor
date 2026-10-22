@@ -72,6 +72,11 @@ const MESSAGES: Record<AutomationStopReason, (detail: string | null, target: str
     message: d ?? 'The data set has no value, or a value the form does not accept, for a field the Flow fills in.',
     tone: 'problem', nextStep: 'Edit the run data set, then start the run again. The application was not changed.',
   }),
+  REQUIRED_FIELD_NOT_DECLARED: (d) => ({
+    title: "A required field isn't part of this step",
+    message: d ?? 'The page has a required field that is still empty, and this step\'s declared fields do not include it. Submitting would have been rejected by the browser, so nothing was sent.',
+    tone: 'problem', nextStep: 'Open the Flow, add that field to this step\'s inputs, then start the run again. The application was not changed.',
+  }),
   APPLICATION_START_FAILED: (d) => ({
     title: 'The application would not start',
     message: d ?? 'The application did not become ready.',

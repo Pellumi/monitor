@@ -45,6 +45,60 @@ test('a field the page does not have is reported distinctly from missing data', 
   assert.equal(!result.ok && result.reason, 'FIELD_NOT_FOUND');
 });
 
+test('a required field in the same form, left out of this step\'s inputs, is caught before the control is pressed', () => {
+  const page = snapshot({
+    elements: [
+      element({ ref: 'e', tag: 'input', fieldName: 'email', label: 'Email', formIndex: 0 }),
+      element({ ref: 'p', tag: 'input', inputType: 'password', fieldName: 'password', label: 'Password', required: true, formIndex: 0 }),
+      element({ ref: 'a', name: 'Login', formIndex: 0 }),
+    ],
+  });
+  const result = resolveStep(page, {
+    control: control({ labels: ['Login'] }),
+    inputs: [{ name: 'email', label: 'Email', dataKey: 'email' }],
+    data: () => ({ value: 'a@b.com', secret: false }),
+    label: 'Login',
+  });
+  assert.equal(!result.ok && result.reason, 'REQUIRED_FIELD_NOT_DECLARED');
+  assert.match(!result.ok ? result.detail : '', /Password/);
+});
+
+test('a required field already filled, already declared, in a different form, or not required at all is left alone', () => {
+  const base = { control: control({ labels: ['Login'] }), data: () => ({ value: 'a@b.com', secret: false }), label: 'Login' };
+  const resolves = (elements: ReturnType<typeof element>[], inputs: { name: string; label: string | null; dataKey: string }[] = []) =>
+    resolveStep(snapshot({ elements }), { ...base, inputs });
+
+  // Already populated: nothing for this step to leave empty.
+  assert.ok(resolves([
+    element({ ref: 'p', tag: 'input', inputType: 'password', fieldName: 'password', required: true, populated: true, formIndex: 0 }),
+    element({ ref: 'a', name: 'Login', formIndex: 0 }),
+  ]).ok);
+
+  // Declared (and so filled) by this very step.
+  assert.ok(resolves([
+    element({ ref: 'p', tag: 'input', fieldName: 'password', label: 'Password', required: true, formIndex: 0 }),
+    element({ ref: 'a', name: 'Login', formIndex: 0 }),
+  ], [{ name: 'password', label: 'Password', dataKey: 'password' }]).ok);
+
+  // A required field elsewhere on the page, outside the control's own form.
+  assert.ok(resolves([
+    element({ ref: 'p', tag: 'input', fieldName: 'newsletter', required: true, formIndex: 1 }),
+    element({ ref: 'a', name: 'Login', formIndex: 0 }),
+  ]).ok);
+
+  // Not required: an ordinary empty field is nobody's problem.
+  assert.ok(resolves([
+    element({ ref: 'p', tag: 'input', fieldName: 'promoCode', formIndex: 0 }),
+    element({ ref: 'a', name: 'Login', formIndex: 0 }),
+  ]).ok);
+
+  // The control itself is not inside any form: native validation could never block it here.
+  assert.ok(resolves([
+    element({ ref: 'p', tag: 'input', fieldName: 'password', required: true, formIndex: 0 }),
+    element({ ref: 'a', name: 'Login', formIndex: null }),
+  ]).ok);
+});
+
 test('resolving a form fill matches by field name or label, case- and punctuation-insensitively', () => {
   const page = snapshot({ elements: [element({ ref: 'a', name: 'Save', testId: 'save' }), element({ ref: 't', fieldName: 'Title', tag: 'input' })] });
   const result = resolveStep(page, { control: control({ testId: 'save' }), inputs: [{ name: 'title', label: null, dataKey: 'title' }], data: (key) => data[key], label: 'Save' });

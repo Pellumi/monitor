@@ -61,6 +61,7 @@ import { transitionDeclarationSummary } from "@tellann/flow-layout";
 import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSidebarMode } from "@/components/sidebar-mode";
 import { RequiresSection, StateDeclarationSection, TransitionDeclarationSection } from "./declaration-sections";
+import { SustainabilityReviewPanel, type SustainabilityReview } from "./sustainability-review-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -532,6 +533,7 @@ export function FlowGraphEditor({
     "build" | "suggestions" | "history" | "settings"
   >("build");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [sustainabilityReview, setSustainabilityReview] = useState<SustainabilityReview | null>(null);
   const builtFlowIdRef = useRef<string>("");
 
   // ── Auto-arrange ───────────────────────────────────────────
@@ -903,10 +905,16 @@ export function FlowGraphEditor({
   });
 
   const publishFlow = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (acknowledgedReviewId?: string) => {
       const res = await authenticatedFetch(
         `${API}/v1/applications/${appId}/flows/${flowId}/publish`,
-        { method: "POST" },
+        acknowledgedReviewId
+          ? {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ acknowledgedReviewId }),
+            }
+          : { method: "POST" },
       );
       if (!res.ok) {
         const payload = await res.json().catch(() => ({}));
@@ -920,6 +928,42 @@ export function FlowGraphEditor({
     },
     onSuccess: () => invalidateFlow(),
   });
+
+  // Advisory pre-publish check: free, deterministic findings about whether this Flow is
+  // "sustainable" (readable end to end, terminal/intermediate routes told apart, named
+  // clearly enough to derive business intent). Never blocks publish on its own — see
+  // sustainability-review-panel.tsx.
+  const requestSustainabilityReview = useMutation({
+    mutationFn: async () => {
+      const res = await authenticatedFetch(
+        `${API}/v1/applications/${appId}/flows/${flowId}/sustainability-review`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error("Failed to run the sustainability review");
+      return res.json() as Promise<{ review: SustainabilityReview }>;
+    },
+  });
+
+  const acknowledgeSustainabilityReview = useMutation({
+    mutationFn: async (reviewId: string) => {
+      const res = await authenticatedFetch(
+        `${API}/v1/applications/${appId}/flows/${flowId}/sustainability-review/${reviewId}/acknowledge`,
+        { method: "POST" },
+      );
+      if (!res.ok) throw new Error("Failed to acknowledge the review");
+      return res.json();
+    },
+  });
+
+  const publishAfterReview = useCallback(
+    (reviewId: string | undefined) => {
+      publishFlow.mutate(reviewId, {
+        onError: (e) =>
+          setPublishError(e instanceof Error ? e.message : "Publish failed"),
+      });
+    },
+    [publishFlow],
+  );
 
   const reviseFlow = useMutation({
     mutationFn: async () => {
@@ -1256,19 +1300,31 @@ export function FlowGraphEditor({
             <Button
               variant="primary"
               size="sm"
-              loading={publishFlow.isPending}
-              disabled={publishFlow.isPending || !(flow?.states.length ?? 0)}
+              loading={publishFlow.isPending || requestSustainabilityReview.isPending}
+              disabled={
+                publishFlow.isPending ||
+                requestSustainabilityReview.isPending ||
+                !(flow?.states.length ?? 0)
+              }
               onClick={() => {
                 setPublishError(null);
-                publishFlow.mutate(undefined, {
-                  onError: (e) =>
-                    setPublishError(
-                      e instanceof Error ? e.message : "Publish failed",
-                    ),
+                requestSustainabilityReview.mutate(undefined, {
+                  onSuccess: (data) => {
+                    if (data.review.findings.length === 0) {
+                      publishAfterReview(data.review.id);
+                    } else {
+                      setSustainabilityReview(data.review);
+                    }
+                  },
+                  // The review is advisory; if it fails to run at all, publishing must not
+                  // be blocked by it — fall back to the pre-review publish behaviour.
+                  onError: () => publishAfterReview(undefined),
                 });
               }}
             >
-              {!publishFlow.isPending && <Lock className="h-3.5 w-3.5" />}
+              {!publishFlow.isPending && !requestSustainabilityReview.isPending && (
+                <Lock className="h-3.5 w-3.5" />
+              )}
               Publish
             </Button>
           ) : (
@@ -1292,6 +1348,27 @@ export function FlowGraphEditor({
         >
           {publishError}
         </div>
+      )}
+
+      {sustainabilityReview && (
+        <SustainabilityReviewPanel
+          review={sustainabilityReview}
+          publishing={publishFlow.isPending || acknowledgeSustainabilityReview.isPending}
+          onClose={() => setSustainabilityReview(null)}
+          onPublishAnyway={() => {
+            const reviewId = sustainabilityReview.id;
+            acknowledgeSustainabilityReview.mutate(reviewId, {
+              // Acknowledging is best-effort audit trail only: publish proceeds either way.
+              onSettled: () => {
+                setSustainabilityReview(null);
+                publishAfterReview(reviewId);
+              },
+            });
+          }}
+          onViewOnCanvas={(nodeIds) => {
+            if (nodeIds[0]) setSelectedStateId(nodeIds[0]);
+          }}
+        />
       )}
 
       {draftPending && (

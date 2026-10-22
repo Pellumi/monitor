@@ -77,6 +77,8 @@ export const AutomationStopReasonSchema = z.enum([
   'TRANSITION_DID_NOT_ADVANCE',
   /** The control was on the page and nobody could have used it: no size, or something drawn on top of it. */
   'CONTROL_OBSCURED',
+  /** The page has a required, empty field in the same form as the control, and this step's declared inputs leave it out. */
+  'REQUIRED_FIELD_NOT_DECLARED',
   'STATE_RECOGNITION_AMBIGUOUS',
   'AUTHENTICATION_FAILED',
   'AUTHORIZATION_BLOCKED',
@@ -117,6 +119,9 @@ export const AUTOMATION_STOP_REASON_KIND: Record<AutomationStopReason, Automatio
   AUTHENTICATION_FAILED: 'APPLICATION',
   AUTHORIZATION_BLOCKED: 'APPLICATION',
   TEST_DATA_UNAVAILABLE: 'INFRASTRUCTURE',
+  // Like a missing data value, this is a gap in what was declared for the run, not a fault the application
+  // committed — so it sits with TEST_DATA_UNAVAILABLE rather than with the APPLICATION-kind reasons.
+  REQUIRED_FIELD_NOT_DECLARED: 'INFRASTRUCTURE',
   APPLICATION_START_FAILED: 'INFRASTRUCTURE',
   APPLICATION_CRASHED: 'APPLICATION',
   BROWSER_CRASHED: 'INFRASTRUCTURE',

@@ -173,6 +173,7 @@ enum AIFeature {
   FLOW_SUGGESTION
   DOMAIN_INFERENCE
   OUTPUT_REPAIR
+  FLOW_SUSTAINABILITY_REVIEW
 }
 
 enum AIInvocationStatus {
@@ -1943,17 +1944,18 @@ model BehaviorGraph {
   updatedAt          DateTime            @updatedAt
   completedAt        DateTime?
 
-  nodes           BehaviorGraphNode[]
-  edges           BehaviorGraphEdge[]
-  rulesets        CompiledRuleset[]
-  reconciliations ReconciliationReport[]
-  versions        BehaviorGraphVersion[]
-  draftSnapshots  FlowDraftSnapshot[]
-  projectBindings FlowProjectBinding[]
-  scans           FlowScan[]
-  drifts          FlowDrift[]
-  initializations FlowInitialization[]
-  qaRuns          QARun[]
+  nodes                 BehaviorGraphNode[]
+  edges                 BehaviorGraphEdge[]
+  rulesets              CompiledRuleset[]
+  reconciliations       ReconciliationReport[]
+  versions              BehaviorGraphVersion[]
+  draftSnapshots        FlowDraftSnapshot[]
+  projectBindings       FlowProjectBinding[]
+  scans                 FlowScan[]
+  drifts                FlowDrift[]
+  initializations       FlowInitialization[]
+  qaRuns                QARun[]
+  sustainabilityReviews FlowSustainabilityReview[]
 
   @@index([applicationId, environmentId, isActive])
 }
@@ -2071,6 +2073,86 @@ model DeclaredStateSuggestion {
   @@index([flowId, reviewId])
 }
 
+// Criteria a published Flow is judged against before publish: readable end to end,
+// states/transitions mapped to the codebase, terminal/intermediate routes told apart,
+// business intent derivable from the graph alone, and every state/transition declaring
+// what it needs. See docs on FlowSustainabilityReview below for how a review is scoped.
+enum SustainabilityCriterion {
+  INTERPRETABLE_END_TO_END
+  CODEBASE_MAPPING
+  ROUTE_DISAMBIGUATION
+  BUSINESS_INTENT_DERIVABLE
+  DATA_ACTION_COMPLETENESS
+}
+
+enum SustainabilityReviewStatus {
+  // The free, deterministic checks have run; AI-judgment findings and the live coverage
+  // walk are either not entitled or not yet attached.
+  STATIC_COMPLETE
+  // Everything this organization is entitled to has run and been attached.
+  COMPLETE
+}
+
+// One pre-publish review of a Flow draft, cached by `reviewHash` so an unchanged draft
+// never re-runs the (costly) AI or coverage-walk parts on a repeated publish attempt.
+// Advisory only: nothing here gates `publishCanonicalFlow` — a publish may proceed
+// whether or not a review exists, was acknowledged, or carries findings.
+model FlowSustainabilityReview {
+  id                  String                     @id @default(uuid())
+  flowId              String
+  flow                BehaviorGraph              @relation(fields: [flowId], references: [id])
+  applicationId       String
+  // flow.version / flow.draftSeq at the moment this review was generated — the draft
+  // being reviewed, not any already-published version.
+  graphVersion        Int
+  draftSeq            Int
+  // Hash of graph shape plus every edge's expectedInput/control JSON — deliberately
+  // broader than index.ts's graphRevisionHash, which omits declared-input changes.
+  reviewHash          String
+  status              SustainabilityReviewStatus @default(STATIC_COMPLETE)
+  // Whether this org's plan allowed the AI-judgment and coverage-walk parts to run.
+  entitled            Boolean                    @default(false)
+  requiresDesktopWalk Boolean                    @default(true)
+  // null | 'PENDING' | 'COMPLETE' | 'SKIPPED_NOT_ENTITLED' | 'SKIPPED_NO_DESKTOP'
+  coverageWalkStatus  String?
+  coverageWalkRunAt   DateTime?
+  acknowledgedBy      String?
+  acknowledgedAt      DateTime?
+  requestedById       String?
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+
+  findings SustainabilityFinding[]
+
+  @@unique([flowId, reviewHash])
+  @@index([flowId, createdAt])
+  @@index([applicationId])
+}
+
+model SustainabilityFinding {
+  id             String                   @id @default(uuid())
+  reviewId       String
+  review         FlowSustainabilityReview @relation(fields: [reviewId], references: [id])
+  criterion      SustainabilityCriterion
+  // e.g. 'ROUTE_COLLISION_UNDISAMBIGUATED', 'CODEBASE_MAPPING_UNRESOLVED', 'REQUIRED_FIELD_NOT_DECLARED'
+  code           String
+  severity       RuleSeverity
+  message        String
+  nodeIds        String[]                 @default([])
+  edgeIds        String[]                 @default([])
+  // An AI-produced explanation, when the finding came from a model (criterion 2's lifted
+  // mapping rationale, criterion 1/4's narration). Null for deterministic findings.
+  rationale      String?
+  // 'STATIC' | 'AI' | 'COVERAGE_WALK'
+  source         String
+  // Soft reference to AIInvocationLog.id, same convention as DeclaredStateSuggestion.aiInvocationId.
+  aiInvocationId String?
+  createdAt      DateTime                 @default(now())
+
+  @@index([reviewId])
+  @@index([reviewId, criterion])
+}
+
 model CompiledRuleset {
   id            String        @id @default(uuid())
   flowId        String // Map flowId to BehaviorGraph.id
@@ -2134,6 +2216,9 @@ model BehaviorGraphVersion {
   expectedTransitionCount    Int?
   expectedCoverage           Float?
   expectedTransitionCoverage Float?
+  // The FlowSustainabilityReview the publisher saw and acknowledged, for audit only —
+  // nothing reads this to decide whether a publish may proceed.
+  sustainabilityReviewId     String?
   createdAt                  DateTime             @default(now())
   qaRuns                     QARun[]
   projectBindings            FlowProjectBinding[]
@@ -2562,45 +2647,45 @@ model FlowScan {
 }
 
 model FlowInitialization {
-  id                     String                   @id @default(uuid())
-  organizationId         String
-  applicationId          String
-  flowId                 String
-  flow                   BehaviorGraph            @relation(fields: [flowId], references: [id], onDelete: Cascade)
-  flowVersionId          String
-  flowVersion            BehaviorGraphVersion     @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
-  bindingId              String
-  binding                FlowProjectBinding       @relation(fields: [bindingId], references: [id], onDelete: Cascade)
-  scanId                 String
-  scan                   FlowScan                 @relation(fields: [scanId], references: [id], onDelete: Restrict)
-  instrumentationPlanId  String?
-  patchSetId             String?
-  status                 FlowInitializationStatus @default(PROPOSED)
-  mode                   FlowInitializationMode?
-  stage                  FlowInitializationStage  @default(SCANNING)
-  manifestVersion        String                   @default("1.0")
-  mappingVersion         String                   @default("1.0")
-  manifest               Json?
-  finalMappings          Json?
-  mappingConfirmations   Json?
-  reportProvenance       Json?
-  selectedTargetAdapters String[]                 @default([])
+  id                              String                   @id @default(uuid())
+  organizationId                  String
+  applicationId                   String
+  flowId                          String
+  flow                            BehaviorGraph            @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  flowVersionId                   String
+  flowVersion                     BehaviorGraphVersion     @relation(fields: [flowVersionId], references: [id], onDelete: Restrict)
+  bindingId                       String
+  binding                         FlowProjectBinding       @relation(fields: [bindingId], references: [id], onDelete: Cascade)
+  scanId                          String
+  scan                            FlowScan                 @relation(fields: [scanId], references: [id], onDelete: Restrict)
+  instrumentationPlanId           String?
+  patchSetId                      String?
+  status                          FlowInitializationStatus @default(PROPOSED)
+  mode                            FlowInitializationMode?
+  stage                           FlowInitializationStage  @default(SCANNING)
+  manifestVersion                 String                   @default("1.0")
+  mappingVersion                  String                   @default("1.0")
+  manifest                        Json?
+  finalMappings                   Json?
+  mappingConfirmations            Json?
+  reportProvenance                Json?
+  selectedTargetAdapters          String[]                 @default([])
   // Checkpoints the user has confirmed fire from more than one place in the
   // code on purpose (a shared component rendered from several routes, a page
   // reachable from two entry points) — once confirmed, a code scan stops
   // reporting that checkpoint's extra locations as a DUPLICATE_MARKER defect.
-  confirmedDuplicateCheckpointIds String[]         @default([])
-  roadmapRevision        Int                      @default(1)
-  manualRoadmap          Json?
-  verification           Json?
-  codeReviewReport       Json?
-  validation             Json?
-  failureReasonSafe      String?
-  approvedByUserId       String?
-  approvedAt             DateTime?
-  completedAt            DateTime?
-  createdAt              DateTime                 @default(now())
-  updatedAt              DateTime                 @updatedAt
+  confirmedDuplicateCheckpointIds String[]                 @default([])
+  roadmapRevision                 Int                      @default(1)
+  manualRoadmap                   Json?
+  verification                    Json?
+  codeReviewReport                Json?
+  validation                      Json?
+  failureReasonSafe               String?
+  approvedByUserId                String?
+  approvedAt                      DateTime?
+  completedAt                     DateTime?
+  createdAt                       DateTime                 @default(now())
+  updatedAt                       DateTime                 @updatedAt
 
   qaRuns QARun[]
 

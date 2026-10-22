@@ -26,3 +26,4 @@ export * from './executor';
 export * from './auth-challenge';
 export * from './entry';
 export * from './persona';
+export * from './route-collisions';
