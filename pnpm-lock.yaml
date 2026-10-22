@@ -1360,6 +1360,9 @@ importers:
       ts-node-dev:
         specifier: ^2.0.0
         version: 2.0.0(@types/node@20.19.43)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.0.0
+        version: 4.22.4
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1458,6 +1461,9 @@ importers:
       ts-node-dev:
         specifier: ^2.0.0
         version: 2.0.0(@types/node@20.19.43)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.0.0
+        version: 4.22.4
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -1513,6 +1519,9 @@ importers:
       ts-node-dev:
         specifier: ^2.0.0
         version: 2.0.0(@types/node@20.19.43)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.0.0
+        version: 4.22.4
       typescript:
         specifier: ^5.0.0
         version: 5.9.3
@@ -3250,6 +3259,7 @@ packages:
   '@opentelemetry/propagator-jaeger@1.23.0':
     resolution: {integrity: sha512-6iArixfgIl3ZgzeltQ5jyiKbjZygM+MbM84pXi1HL0Qs4x4Ck5rM6wEtjhZffFnlDMWEkEqrnM0xF6bTfbiMAQ==}
     engines: {node: '>=14'}
+    deprecated: Package no longer supported. See https://github.com/open-telemetry/opentelemetry-js/pull/7077
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.9.0'
 
@@ -3321,12 +3331,14 @@ packages:
   '@opentelemetry/sdk-trace-base@1.23.0':
     resolution: {integrity: sha512-PzBmZM8hBomUqvCddF/5Olyyviayka44O5nDWq673np3ctnvwMOvNrsUORZjKja1zJbwEuD9niAGbnVrz3jwRQ==}
     engines: {node: '>=14'}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.9.0'
 
   '@opentelemetry/sdk-trace-node@1.23.0':
     resolution: {integrity: sha512-dwnin5Go2r6VzJZkVc9JBPupssWp7j2EFto+S7qRkwQ00WDykWeq3x2Skk7I1Jr448FeBSvGCQVPgV5e6s6O3w==}
     engines: {node: '>=14'}
+    deprecated: Use @opentelemetry/sdk-trace package
     peerDependencies:
       '@opentelemetry/api': '>=1.0.0 <1.9.0'
 

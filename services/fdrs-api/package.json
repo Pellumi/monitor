@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "node -r ../../scripts/register-root-env.cjs ../../node_modules/ts-node-dev/lib/bin.js --respawn --transpile-only src/index.ts",
+    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "test": "tsc && node --test dist/automated-reconciliation.test.js dist/flow-domain.test.js dist/accepted-workflows.test.js dist/sub-flows.test.js dist/flow-spec-data.test.js dist/sustainability-review.test.js"
   },
@@ -30,6 +30,7 @@
     "@types/jsonwebtoken": "^9.0.5",
     "@types/node": "^20.0.0",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.0.0",
     "typescript": "^5.0.0"
   }
 }
