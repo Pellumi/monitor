@@ -418,6 +418,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
           annotations: {
             include: {
               author: { select: { id: true, displayName: true } },
+              resolvedBy: { select: { id: true, displayName: true } },
               mentions: true,
             },
             orderBy: { createdAt: 'asc' },
@@ -772,7 +773,11 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       },
       inFlowFindings: { recommendedNextActions: improvements.slice(0, 10), findings: improvements, missingStates, missingTransitions, unexpectedStates },
       criticalSystemWideFindings: criticalOutOfFlow,
-      userAnnotations: run.annotations.map((annotation, index) => ({ id: annotation.id, pin: index + 1, comment: annotation.comment, author: annotation.author, timestamp: annotation.createdAt, route: annotation.normalizedRoute, flowState: annotation.flowStateKey, resolution: annotation.windowResolution, element: annotation.elementFingerprint, screenshotArtifactId: annotation.screenshotArtifactId, mentionedTeammates: annotation.mentions.map((mention) => ({ id: mention.userId, displayName: mention.displayNameSnapshot })) })),
+      // This mapping does not auto-inherit new QARunAnnotation columns — any
+      // field added to the model (as `resolved`/`resolvedAt`/`resolvedBy`
+      // were) must be added here explicitly, or the downloaded report will
+      // silently omit it even though the live Annotations tab shows it.
+      userAnnotations: run.annotations.map((annotation, index) => ({ id: annotation.id, pin: index + 1, comment: annotation.comment, author: annotation.author, timestamp: annotation.createdAt, route: annotation.normalizedRoute, flowState: annotation.flowStateKey, resolution: annotation.windowResolution, element: annotation.elementFingerprint, screenshotArtifactId: annotation.screenshotArtifactId, resolved: annotation.resolved, resolvedAt: annotation.resolvedAt, resolvedBy: annotation.resolvedBy, mentionedTeammates: annotation.mentions.map((mention) => ({ id: mention.userId, displayName: mention.displayNameSnapshot })) })),
       evidenceAppendix: {
         events: appendixEvents.map((event) => ({ id: event.id, eventId: event.eventId, type: event.eventType, source: event.source, scope: event.scope, timestamp: event.occurredAt, route: event.normalizedRoute ?? routeFromUrl(event.pageUrl), state: event.acceptedFlowStateKey, interactionGroupId: event.interactionGroupId, causedByEventId: event.causedByEventId, metadata: event.metadata, protectedValues: event.protectedValues })),
         eventTotal: run.evidenceEvents.length,

@@ -34,6 +34,8 @@ import type {
   QAEvidenceEvent,
   CreateQARunAnnotation,
   QAMentionableMember,
+  QARunAnnotation,
+  UpdateQARunAnnotation,
 } from "@tellann/desktop-contracts";
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
 import { resolveTelemetryGateway } from "./gateway-endpoint";
@@ -1392,6 +1394,38 @@ export class DesktopCloudClient {
     return this.request(`/qa-runs/${runId}/annotations`, {
       method: "POST",
       body: JSON.stringify({ ...annotation, screenshotArtifactId }),
+    });
+  }
+
+  async listAnnotations(runId: string): Promise<QARunAnnotation[]> {
+    return this.request(`/qa-runs/${runId}/annotations`);
+  }
+
+  async updateAnnotation(
+    runId: string,
+    annotationId: string,
+    input: UpdateQARunAnnotation,
+  ): Promise<QARunAnnotation> {
+    return this.request(`/qa-runs/${runId}/annotations/${annotationId}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async deleteAnnotation(runId: string, annotationId: string): Promise<void> {
+    await this.request(`/qa-runs/${runId}/annotations/${annotationId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async resolveAnnotation(
+    runId: string,
+    annotationId: string,
+    resolved: boolean,
+  ): Promise<QARunAnnotation> {
+    return this.request(`/qa-runs/${runId}/annotations/${annotationId}/resolve`, {
+      method: "POST",
+      body: JSON.stringify({ resolved }),
     });
   }
 

@@ -119,6 +119,27 @@ test('the CSV covers findings, gaps, out-of-Flow risks, annotations and limits',
   assert.ok(csv.includes('"He said ""no"" then left"'));
 });
 
+test('a resolved annotation with a matching screenshot embeds the image and says who resolved it', () => {
+  const withScreenshot = input();
+  (withScreenshot.report as any).sections.userAnnotations = [{
+    id: 'a1', pin: 1, comment: 'Button does nothing', author: { displayName: 'QA' },
+    screenshotArtifactId: 'shot-1', resolved: true,
+    resolvedAt: '2026-01-06T00:00:00.000Z', resolvedBy: { displayName: 'Reviewer' },
+  }];
+  withScreenshot.annotationScreenshots = { 'shot-1': 'data:image/png;base64,AAAA' };
+  const html = qualityReportHtml(withScreenshot);
+  assert.ok(html.includes('<img class="annotation-shot" src="data:image/png;base64,AAAA"'));
+  assert.ok(html.includes('resolved by Reviewer'));
+  const csv = qualityReportCsv(withScreenshot);
+  assert.ok(csv.includes('resolved by Reviewer'));
+  assert.ok(csv.includes('screenshot shot-1'));
+});
+
+test('an annotation screenshot with no matching entry in the map renders without an image', () => {
+  const html = qualityReportHtml(input());
+  assert.ok(!html.includes('<img class="annotation-shot"'));
+});
+
 test('the file name identifies the application, Flow and run without a path', () => {
   const base = qualityReportFileBase(input());
   assert.equal(base, 'Tellann-Acad-AI-Onboarding-Flow-quality-report-11111111-2026-01-05');

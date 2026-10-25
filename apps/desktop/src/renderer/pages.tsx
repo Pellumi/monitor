@@ -15400,10 +15400,13 @@ function FindingsLayout({ items }: { items: unknown[] }) {
 }
 
 type ReplayEvent = {
+  /** "annotation" entries are Inspect-mode comments placed as checkpoints alongside the recorded session events. */
+  kind: "session" | "annotation";
   eventType: string;
   timestamp: string;
   offset: number;
   metadata: Record<string, unknown>;
+  annotation?: Record<string, unknown>;
 };
 
 function replayEvents(data: Record<string, unknown> | null): ReplayEvent[] {
@@ -15413,19 +15416,46 @@ function replayEvents(data: Record<string, unknown> | null): ReplayEvent[] {
       ? (asRecord(session).events as unknown[])
       : [],
   );
-  const firstTime = rawEvents.length
+  const rawAnnotations = Array.isArray(data?.annotations) ? data.annotations : [];
+  const firstEventTime = rawEvents.length
     ? new Date(String(asRecord(rawEvents[0]).timestamp)).valueOf()
     : 0;
-  return rawEvents.map((value) => {
+  const firstAnnotationTime = rawAnnotations.length
+    ? new Date(String(asRecord(rawAnnotations[0]).createdAt)).valueOf()
+    : 0;
+  const firstTime = rawEvents.length
+    ? firstEventTime
+    : firstAnnotationTime;
+  const sessionEvents: ReplayEvent[] = rawEvents.map((value) => {
     const event = asRecord(value);
     const timestamp = String(event.timestamp ?? "");
     return {
+      kind: "session",
       eventType: String(event.eventType ?? event.type ?? "EVENT"),
       timestamp,
       offset: Math.max(0, new Date(timestamp).valueOf() - firstTime) || 0,
       metadata: asRecord(event.metadata ?? event.payload),
     };
   });
+  const annotationEvents: ReplayEvent[] = rawAnnotations.map((value) => {
+    const annotation = asRecord(value);
+    const timestamp = String(annotation.createdAt ?? "");
+    const author = asRecord(annotation.author);
+    return {
+      kind: "annotation",
+      eventType: "ANNOTATION",
+      timestamp,
+      offset: Math.max(0, new Date(timestamp).valueOf() - firstTime) || 0,
+      metadata: {
+        comment: annotation.comment,
+        author: author.displayName ?? null,
+        route: annotation.normalizedRoute,
+        resolved: annotation.resolved ? "Yes" : "No",
+      },
+      annotation,
+    };
+  });
+  return [...sessionEvents, ...annotationEvents].sort((a, b) => a.offset - b.offset);
 }
 
 function formatOffset(milliseconds: number) {
@@ -15436,14 +15466,18 @@ function formatOffset(milliseconds: number) {
 function ReplayLayout({
   data,
   error,
+  runId,
 }: {
   data: Record<string, unknown> | null;
   error: string | null;
+  runId?: string;
 }) {
+  const { getArtifactDownloadUrl } = useDesktop();
   const events = useMemo(() => replayEvents(data), [data]);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(1);
+  const [annotationShotUrl, setAnnotationShotUrl] = useState<string | null>(null);
   const selected = events[selectedIndex];
   const duration = events.at(-1)?.offset ?? 0;
 
@@ -15484,6 +15518,8 @@ function ReplayLayout({
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [events.length]);
 
+  useEffect(() => { setAnnotationShotUrl(null); }, [selectedIndex]);
+
   if (error)
     return <EmptyRunSection title="Replay unavailable" description={error} />;
   if (!data) return <LoadingState />;
@@ -15514,8 +15550,13 @@ function ReplayLayout({
           {events.map((event, index) => (
             <button
               key={`${event.timestamp}-${index}`}
-              aria-label={`${event.eventType} at ${formatOffset(event.offset)}`}
-              className={index === selectedIndex ? "selected" : ""}
+              aria-label={event.kind === "annotation"
+                ? `Annotation at ${formatOffset(event.offset)}`
+                : `${event.eventType} at ${formatOffset(event.offset)}`}
+              className={[
+                index === selectedIndex ? "selected" : "",
+                event.kind === "annotation" ? "replay-marker-annotation" : "",
+              ].filter(Boolean).join(" ")}
               style={{
                 left: `${duration ? (event.offset / duration) * 100 : 0}%`,
               }}
@@ -15585,35 +15626,121 @@ function ReplayLayout({
           {events.map((event, index) => (
             <button
               key={`${event.eventType}-${index}`}
-              className={index === selectedIndex ? "selected" : ""}
+              className={[
+                index === selectedIndex ? "selected" : "",
+                event.kind === "annotation" ? "replay-row-annotation" : "",
+              ].filter(Boolean).join(" ")}
               onClick={() => setSelectedIndex(index)}
             >
-              <span>{event.eventType.replaceAll("_", " ")}</span>
+              <span>
+                {event.kind === "annotation" ? <MessageSquare size={12} aria-hidden="true" /> : null}
+                {event.eventType.replaceAll("_", " ")}
+              </span>
               <time>{formatOffset(event.offset)}</time>
               <small>
-                {displayValue(
-                  event.metadata.url ?? event.metadata.endpoint,
-                  "Recorded interaction",
-                )}
+                {event.kind === "annotation"
+                  ? displayValue(event.metadata.comment, "Annotation")
+                  : displayValue(event.metadata.url ?? event.metadata.endpoint, "Recorded interaction")}
               </small>
             </button>
           ))}
         </div>
-        <article className="replay-detail">
-          <small>Selected event</small>
-          <h3>{selected.eventType.replaceAll("_", " ")}</h3>
-          <p>{formatDate(selected.timestamp)}</p>
-          <dl className="data-list">
-            {Object.entries(selected.metadata).map(([key, value]) => (
-              <div key={key}>
-                <dt>{key.replaceAll("_", " ")}</dt>
-                <dd>{displayValue(value)}</dd>
-              </div>
-            ))}
-          </dl>
-        </article>
+        {selected.kind === "annotation" && selected.annotation ? (
+          <AnnotationReplayDetail
+            annotation={selected.annotation}
+            timestamp={selected.timestamp}
+            runId={runId}
+            getArtifactDownloadUrl={getArtifactDownloadUrl}
+            shotUrl={annotationShotUrl}
+            onLoadShot={setAnnotationShotUrl}
+          />
+        ) : (
+          <article className="replay-detail">
+            <small>Selected event</small>
+            <h3>{selected.eventType.replaceAll("_", " ")}</h3>
+            <p>{formatDate(selected.timestamp)}</p>
+            <dl className="data-list">
+              {Object.entries(selected.metadata).map(([key, value]) => (
+                <div key={key}>
+                  <dt>{key.replaceAll("_", " ")}</dt>
+                  <dd>{displayValue(value)}</dd>
+                </div>
+              ))}
+            </dl>
+          </article>
+        )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Shown in place of the generic session-event detail when the selected replay
+ * checkpoint is an Inspect-mode annotation — mirrors the Annotations tab's
+ * card fields (comment, author, mentions, source mapping, resolved state)
+ * plus an on-demand screenshot, rather than the raw metadata dl every other
+ * event type falls back to.
+ */
+function AnnotationReplayDetail({
+  annotation,
+  timestamp,
+  runId,
+  getArtifactDownloadUrl,
+  shotUrl,
+  onLoadShot,
+}: {
+  annotation: Record<string, unknown>;
+  timestamp: string;
+  runId?: string;
+  getArtifactDownloadUrl: (runId: string, artifactId: string) => Promise<{ url: string; expiresInSeconds?: number }>;
+  shotUrl: string | null;
+  onLoadShot: (url: string) => void;
+}) {
+  const author = asRecord(annotation.author);
+  const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
+  const sourceMapping = asRecord(asRecord(annotation.elementFingerprint).sourceMapping);
+  const isMatched = sourceMapping.status === "MATCHED";
+  const screenshotArtifactId = typeof annotation.screenshotArtifactId === "string" ? annotation.screenshotArtifactId : null;
+  return (
+    <article className="replay-detail">
+      <small>Annotation checkpoint</small>
+      <h3>{author.displayName ? String(author.displayName) : "Inspect-mode comment"}</h3>
+      <p>{formatDate(timestamp)}</p>
+      <dl className="data-list">
+        <div><dt>Comment</dt><dd>{displayValue(annotation.comment)}</dd></div>
+        <div><dt>Route</dt><dd>{displayValue(annotation.normalizedRoute)}</dd></div>
+        {isMatched && sourceMapping.path ? (
+          <div><dt>Source</dt><dd>{String(sourceMapping.path)}{sourceMapping.startLine ? `:${sourceMapping.startLine}` : ""}</dd></div>
+        ) : null}
+        <div><dt>Resolved</dt><dd>{annotation.resolved ? "Yes" : "No"}</dd></div>
+        {mentions.length ? (
+          <div>
+            <dt>Mentioned</dt>
+            <dd>{mentions.map((item) => `@${String(asRecord(item).displayNameSnapshot ?? "member")}`).join(", ")}</dd>
+          </div>
+        ) : null}
+      </dl>
+      {screenshotArtifactId && runId ? (
+        shotUrl ? (
+          <img src={shotUrl} alt="Highlighted annotated element" className="replay-annotation-shot" />
+        ) : (
+          <button
+            type="button"
+            className="button secondary"
+            onClick={async () => {
+              try {
+                const result = await getArtifactDownloadUrl(runId, screenshotArtifactId);
+                if (result.url) onLoadShot(result.url);
+              } catch (error) {
+                console.error("Failed to load annotation screenshot", error);
+              }
+            }}
+          >
+            View screenshot
+          </button>
+        )
+      ) : null}
+    </article>
   );
 }
 
@@ -15705,12 +15832,87 @@ function ReconciliationLayout({
 export function RunDetailPage() {
   const { projectId, runId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const { getRun, getRunReplay, retryRunSynchronization } = useDesktop();
+  const { getRun, getRunReplay, retryRunSynchronization, updateAnnotation, deleteAnnotation, resolveAnnotation, session } = useDesktop();
+  const currentUserId = session?.user?.id ?? null;
   const [run, setRun] = useState<Record<string, unknown> | null>(null);
   const [replay, setReplay] = useState<Record<string, unknown> | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
   const [replayError, setReplayError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editingAnnotationId, setEditingAnnotationId] = useState<string | null>(null);
+  const [editAnnotationComment, setEditAnnotationComment] = useState("");
+  const [confirmDeleteAnnotationId, setConfirmDeleteAnnotationId] = useState<string | null>(null);
+  const [annotationBusyId, setAnnotationBusyId] = useState<string | null>(null);
+  const [annotationActionError, setAnnotationActionError] = useState<string | null>(null);
+  const patchAnnotation = useCallback((annotationId: string, updated: Record<string, unknown>) => {
+    setRun((current) => {
+      if (!current) return current;
+      const list = Array.isArray(current.annotations) ? current.annotations : [];
+      return {
+        ...current,
+        annotations: list.map((item) => (asRecord(item).id === annotationId ? updated : item)),
+      };
+    });
+  }, []);
+  const removeAnnotationFromState = useCallback((annotationId: string) => {
+    setRun((current) => {
+      if (!current) return current;
+      const list = Array.isArray(current.annotations) ? current.annotations : [];
+      return { ...current, annotations: list.filter((item) => asRecord(item).id !== annotationId) };
+    });
+  }, []);
+  const startAnnotationEdit = useCallback((annotation: Record<string, unknown>) => {
+    setAnnotationActionError(null);
+    setEditingAnnotationId(String(annotation.id));
+    setEditAnnotationComment(String(annotation.comment ?? ""));
+  }, []);
+  const cancelAnnotationEdit = useCallback(() => {
+    setEditingAnnotationId(null);
+    setEditAnnotationComment("");
+  }, []);
+  const submitAnnotationEdit = useCallback(async (annotationId: string) => {
+    const comment = editAnnotationComment.trim();
+    if (!comment || !runId) return;
+    setAnnotationBusyId(annotationId);
+    setAnnotationActionError(null);
+    try {
+      const updated = await updateAnnotation(runId, annotationId, { comment });
+      patchAnnotation(annotationId, updated);
+      setEditingAnnotationId(null);
+      setEditAnnotationComment("");
+    } catch (error) {
+      setAnnotationActionError(error instanceof Error ? error.message : "Could not save changes.");
+    } finally {
+      setAnnotationBusyId(null);
+    }
+  }, [editAnnotationComment, patchAnnotation, runId, updateAnnotation]);
+  const handleAnnotationDelete = useCallback(async (annotationId: string) => {
+    if (!runId) return;
+    setAnnotationBusyId(annotationId);
+    setAnnotationActionError(null);
+    try {
+      await deleteAnnotation(runId, annotationId);
+      removeAnnotationFromState(annotationId);
+      setConfirmDeleteAnnotationId(null);
+    } catch (error) {
+      setAnnotationActionError(error instanceof Error ? error.message : "Could not delete this annotation.");
+    } finally {
+      setAnnotationBusyId(null);
+    }
+  }, [deleteAnnotation, removeAnnotationFromState, runId]);
+  const handleAnnotationResolve = useCallback(async (annotationId: string, resolved: boolean) => {
+    if (!runId) return;
+    setAnnotationBusyId(annotationId);
+    setAnnotationActionError(null);
+    try {
+      const updated = await resolveAnnotation(runId, annotationId, resolved);
+      patchAnnotation(annotationId, updated);
+    } catch (error) {
+      setAnnotationActionError(error instanceof Error ? error.message : "Could not update this annotation.");
+    } finally {
+      setAnnotationBusyId(null);
+    }
+  }, [patchAnnotation, resolveAnnotation, runId]);
   const captureTracks = Array.isArray(run?.captureTracks) && run.captureTracks.length
     ? (run.captureTracks as string[])
     : ["FRONTEND"];
@@ -15932,28 +16134,62 @@ export function RunDetailPage() {
           <FindingsLayout items={findings} />
         </TabsContent>
         <TabsContent value="annotations">
+          {annotationActionError ? (
+            <p className="annotation-action-error" role="alert">{annotationActionError}</p>
+          ) : null}
           {annotations.length ? (
             <div className="annotation-list" id="annotations">
               {annotations.map((raw, index) => {
                 const annotation = asRecord(raw);
+                const annotationId = String(annotation.id ?? "");
                 const author = asRecord(annotation.author);
+                const resolvedBy = asRecord(annotation.resolvedBy);
+                const isResolved = Boolean(annotation.resolved);
+                const isAuthor = Boolean(currentUserId) && String(annotation.authorId ?? "") === currentUserId;
                 const mentions = Array.isArray(annotation.mentions) ? annotation.mentions : [];
                 const sourceMapping = asRecord(asRecord(annotation.elementFingerprint).sourceMapping);
                 const isMatched = sourceMapping.status === "MATCHED";
                 const sourcePath = String(sourceMapping.path ?? "");
                 const sourceStart = Number(sourceMapping.startLine ?? 0);
                 const sourceEnd = Number(sourceMapping.endLine ?? sourceStart);
+                // A deployed-URL run has no local workspace to analyze, which the
+                // server collapses into the same NOT_CONNECTED status as "never
+                // connected a codebase" — the copy here is what tells them apart.
+                const sourceLabel = sourceMapping.status === "ANALYSIS_UNAVAILABLE"
+                  ? "Codebase analysis pending"
+                  : sourceMapping.status === "NO_MATCH"
+                    ? "No confident source match"
+                    : sourceMapping.status === "NOT_CONNECTED"
+                      ? "No codebase connected (or this run targeted a deployed URL)"
+                      : null;
+                const isEditing = editingAnnotationId === annotationId;
+                const isBusy = annotationBusyId === annotationId;
                 return (
-                  <article className="annotation-card" key={String(annotation.id ?? index)}>
-                    <div className="annotation-pin">{index + 1}</div>
+                  <article className={`annotation-card${isResolved ? " resolved" : ""}`} key={annotationId || index}>
+                    <div className="annotation-pin">{isResolved ? <Check size={13} /> : index + 1}</div>
                     <div>
                       {author.displayName ? <strong>{String(author.displayName)}</strong> : null}
                       <ul style={{ listStyle: "none", padding: 0, display: "flex", flexDirection: "column", gap: "0.25rem", fontSize: "0.875rem" }}>
                         {isMatched && sourcePath ? <li><strong>File Name:</strong> {sourcePath}</li> : null}
                         {isMatched && sourceStart > 0 ? <li><strong>Line Number:</strong> {sourceStart}{sourceEnd > sourceStart ? `–${sourceEnd}` : ""}</li> : null}
+                        {!isMatched && sourceLabel ? <li><strong>Source:</strong> {sourceLabel}</li> : null}
                         <li><strong>Route Path Name:</strong> {String(annotation.normalizedRoute ?? "/")}</li>
-                        {annotation.comment ? <li><strong>Comment:</strong> {String(annotation.comment)}</li> : null}
+                        {isEditing ? (
+                          <li>
+                            <textarea
+                              className="annotation-edit-textarea"
+                              value={editAnnotationComment}
+                              onChange={(event) => setEditAnnotationComment(event.target.value)}
+                              rows={3}
+                              maxLength={2000}
+                              disabled={isBusy}
+                            />
+                          </li>
+                        ) : annotation.comment ? <li><strong>Comment:</strong> {String(annotation.comment)}</li> : null}
                         <li><strong>Time Stamp:</strong> {formatDate(annotation.createdAt)}</li>
+                        {isResolved ? (
+                          <li><strong>Resolved:</strong> {resolvedBy.displayName ? `By ${String(resolvedBy.displayName)}` : "Yes"}{annotation.resolvedAt ? ` · ${formatDate(annotation.resolvedAt)}` : ""}</li>
+                        ) : null}
                       </ul>
                       {mentions.length ? (
                         <div className="annotation-mentions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
@@ -15962,6 +16198,53 @@ export function RunDetailPage() {
                           ))}
                         </div>
                       ) : null}
+                      <div className="annotation-actions" style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                        {isEditing ? (
+                          <>
+                            <button
+                              className="button primary"
+                              disabled={isBusy || !editAnnotationComment.trim()}
+                              onClick={() => void submitAnnotationEdit(annotationId)}
+                            >
+                              <Check size={14} /> Save
+                            </button>
+                            <button className="button" disabled={isBusy} onClick={cancelAnnotationEdit}>
+                              <X size={14} /> Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            {isAuthor ? (
+                              <button className="button" disabled={isBusy} onClick={() => startAnnotationEdit(annotation)}>
+                                <Pencil size={14} /> Edit
+                              </button>
+                            ) : null}
+                            <button
+                              className="button"
+                              disabled={isBusy}
+                              onClick={() => void handleAnnotationResolve(annotationId, !isResolved)}
+                            >
+                              <Check size={14} /> {isResolved ? "Unresolve" : "Resolve"}
+                            </button>
+                            {isAuthor ? (
+                              confirmDeleteAnnotationId === annotationId ? (
+                                <>
+                                  <button className="button danger" disabled={isBusy} onClick={() => void handleAnnotationDelete(annotationId)}>
+                                    <Trash2 size={14} /> Confirm delete
+                                  </button>
+                                  <button className="button" disabled={isBusy} onClick={() => setConfirmDeleteAnnotationId(null)}>
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button className="button" disabled={isBusy} onClick={() => setConfirmDeleteAnnotationId(annotationId)}>
+                                  <Trash2 size={14} /> Delete
+                                </button>
+                              )
+                            ) : null}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </article>
                 );
@@ -15970,7 +16253,7 @@ export function RunDetailPage() {
           ) : <EmptyRunSection title="No annotations" description="Use Inspect mode during a QA run to pin comments to elements." />}
         </TabsContent>
         <TabsContent value="replay">
-          <ReplayLayout data={replay} error={replayError} />
+          <ReplayLayout data={replay} error={replayError} runId={runId} />
         </TabsContent>
         <TabsContent value="graph">
           <GraphLayout run={run} />

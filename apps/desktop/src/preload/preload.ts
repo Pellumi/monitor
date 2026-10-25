@@ -67,6 +67,10 @@ const IPC = {
   archiveRun: 'tellann:cloud:runs:archive',
   restoreRun: 'tellann:cloud:runs:restore',
   deleteRun: 'tellann:cloud:runs:delete',
+  listAnnotations: 'tellann:cloud:runs:annotations:list',
+  updateAnnotation: 'tellann:cloud:runs:annotations:update',
+  deleteAnnotation: 'tellann:cloud:runs:annotations:delete',
+  resolveAnnotation: 'tellann:cloud:runs:annotations:resolve',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -366,6 +370,13 @@ contextBridge.exposeInMainWorld('tellann', {
     archive: (runId: string) => ipcRenderer.invoke(IPC.archiveRun, runId),
     restore: (runId: string) => ipcRenderer.invoke(IPC.restoreRun, runId),
     delete: (runId: string) => ipcRenderer.invoke(IPC.deleteRun, runId),
+    listAnnotations: (runId: string) => ipcRenderer.invoke(IPC.listAnnotations, runId),
+    updateAnnotation: (runId: string, annotationId: string, input: { comment?: string; mentionedUserIds?: string[] }) =>
+      ipcRenderer.invoke(IPC.updateAnnotation, runId, annotationId, input),
+    deleteAnnotation: (runId: string, annotationId: string) =>
+      ipcRenderer.invoke(IPC.deleteAnnotation, runId, annotationId),
+    resolveAnnotation: (runId: string, annotationId: string, resolved: boolean) =>
+      ipcRenderer.invoke(IPC.resolveAnnotation, runId, annotationId, resolved),
     saveReportDownload: (runId: string, format: 'JSON' | 'PDF' | 'CSV' | 'HTML') =>
       ipcRenderer.invoke(IPC.saveRunReportDownload, { runId, format }),
     start: (input: unknown) => ipcRenderer.invoke(IPC.startGuidedRun, input),

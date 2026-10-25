@@ -135,6 +135,10 @@ type DesktopContextValue = {
   /** Also deletes the run's report, evidence and artifacts, which cascade with it. */
   deleteRun(runId: string): Promise<void>;
   getRun(runId: string): Promise<Record<string, unknown>>;
+  /** Only the annotation's author may edit or delete it; any org member may resolve/unresolve. */
+  updateAnnotation(runId: string, annotationId: string, input: { comment?: string; mentionedUserIds?: string[] }): Promise<Record<string, unknown>>;
+  deleteAnnotation(runId: string, annotationId: string): Promise<void>;
+  resolveAnnotation(runId: string, annotationId: string, resolved: boolean): Promise<Record<string, unknown>>;
   /** Only the SDK packages actually installed in the workspace, each compared against what is published. */
   checkSdkVersions(applicationId: string): Promise<Array<{
     ecosystem: 'npm' | 'pypi'; package: string; installed: string; latest: string | null; outdated: boolean;
@@ -754,6 +758,9 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     restoreRun,
     deleteRun,
     getRun: (runId) => bridge().runs.get(runId),
+    updateAnnotation: (runId, annotationId, input) => bridge().runs.updateAnnotation(runId, annotationId, input),
+    deleteAnnotation: (runId, annotationId) => bridge().runs.deleteAnnotation(runId, annotationId),
+    resolveAnnotation: (runId, annotationId, resolved) => bridge().runs.resolveAnnotation(runId, annotationId, resolved),
     checkSdkVersions: (applicationId) => bridge().runs.checkSdkVersions(applicationId),
     getRunReplay: (runId) => bridge().runs.getReplay(runId),
     getRunBackendEvidence: (runId, query) => bridge().runs.getBackendEvidence(runId, query),

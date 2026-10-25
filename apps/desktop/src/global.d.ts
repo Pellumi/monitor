@@ -295,6 +295,13 @@ declare global {
         restore(runId: string): Promise<QARunSummary>;
         /** Also deletes the run's report, evidence and artifacts, which cascade with it. */
         delete(runId: string): Promise<void>;
+        listAnnotations(runId: string): Promise<Array<Record<string, unknown>>>;
+        /** Author-only. */
+        updateAnnotation(runId: string, annotationId: string, input: { comment?: string; mentionedUserIds?: string[] }): Promise<Record<string, unknown>>;
+        /** Author-only. */
+        deleteAnnotation(runId: string, annotationId: string): Promise<void>;
+        /** Any org member may resolve/unresolve. */
+        resolveAnnotation(runId: string, annotationId: string, resolved: boolean): Promise<Record<string, unknown>>;
         saveReportDownload(
           runId: string,
           format: ReportExportFormat,

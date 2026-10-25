@@ -167,6 +167,47 @@ export const CreateQARunAnnotationSchema = z.object({
   mentionedUserIds: z.array(z.string().uuid()).max(50).default([]),
 });
 
+/** Shared shape for the author/mention/resolver identities embedded in a read-model annotation. */
+export const QAAnnotationUserSummarySchema = z.object({
+  id: z.string().uuid(),
+  displayName: z.string(),
+  avatarUrl: z.string().nullable(),
+});
+
+export const QAAnnotationMentionSchema = z.object({
+  userId: z.string().uuid(),
+  displayNameSnapshot: z.string(),
+});
+
+/**
+ * The shape an annotation comes back as from GET/POST/PATCH/resolve. Distinct
+ * from `CreateQARunAnnotationSchema`: `mentionedUserIds` (write-side input) is
+ * replaced by the persisted `mentions` relation, and server-assigned/derived
+ * fields (id, author, resolve state, timestamps) are added.
+ */
+export const QARunAnnotationSchema = CreateQARunAnnotationSchema.omit({ mentionedUserIds: true }).extend({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  authorId: z.string().uuid(),
+  author: QAAnnotationUserSummarySchema,
+  mentions: z.array(QAAnnotationMentionSchema).default([]),
+  resolved: z.boolean(),
+  resolvedAt: z.string().nullable(),
+  resolvedById: z.string().uuid().nullable(),
+  resolvedBy: QAAnnotationUserSummarySchema.nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const UpdateQARunAnnotationSchema = z.object({
+  comment: z.string().trim().min(1).max(2_000).optional(),
+  mentionedUserIds: z.array(z.string().uuid()).max(50).optional(),
+});
+
+export const ResolveQARunAnnotationSchema = z.object({
+  resolved: z.boolean(),
+});
+
 export const RunLifecycleEventSchema = z.object({
   runId: z.string().uuid(),
   applicationId: z.string().uuid(),
@@ -1415,6 +1456,10 @@ export const IPC = {
   archiveRun: 'tellann:cloud:runs:archive',
   restoreRun: 'tellann:cloud:runs:restore',
   deleteRun: 'tellann:cloud:runs:delete',
+  listAnnotations: 'tellann:cloud:runs:annotations:list',
+  updateAnnotation: 'tellann:cloud:runs:annotations:update',
+  deleteAnnotation: 'tellann:cloud:runs:annotations:delete',
+  resolveAnnotation: 'tellann:cloud:runs:annotations:resolve',
   getDeclaredFlows: 'tellann:cloud:intent:list',
   getDeclaredFlow: 'tellann:cloud:intent:get',
   createDeclaredFlow: 'tellann:cloud:intent:create',
@@ -1837,6 +1882,9 @@ export type QAPendingProtectedValue = z.infer<typeof QAPendingProtectedValueSche
 export type QAMentionableMember = z.infer<typeof QAMentionableMemberSchema>;
 export type QAElementFingerprint = z.infer<typeof QAElementFingerprintSchema>;
 export type CreateQARunAnnotation = z.infer<typeof CreateQARunAnnotationSchema>;
+export type QARunAnnotation = z.infer<typeof QARunAnnotationSchema>;
+export type UpdateQARunAnnotation = z.infer<typeof UpdateQARunAnnotationSchema>;
+export type ResolveQARunAnnotation = z.infer<typeof ResolveQARunAnnotationSchema>;
 export type RunLifecycleEvent = z.infer<typeof RunLifecycleEventSchema>;
 export type DesktopSession = z.infer<typeof DesktopSessionSchema>;
 export type ReportExportFormat = z.infer<typeof ReportExportFormatSchema>;

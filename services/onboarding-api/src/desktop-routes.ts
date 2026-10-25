@@ -28,6 +28,8 @@ import {
   automationTargetsConsistent,
   AutomationStopReasonSchema,
   CreateQARunAnnotationSchema,
+  UpdateQARunAnnotationSchema,
+  ResolveQARunAnnotationSchema,
   QAEvidenceEventSchema,
   type AutomationRunState,
   type AutomationStopReason,
@@ -443,6 +445,7 @@ export function createDesktopRouter(input: {
         annotations: {
           include: {
             author: { select: { id: true, displayName: true, avatarUrl: true } },
+            resolvedBy: { select: { id: true, displayName: true, avatarUrl: true } },
             mentions: true,
           },
           orderBy: { createdAt: 'asc' },
@@ -1761,6 +1764,90 @@ export function createDesktopRouter(input: {
     res.json(run.annotations);
   });
 
+  const annotationResponseInclude = {
+    author: { select: { id: true, displayName: true, avatarUrl: true } },
+    resolvedBy: { select: { id: true, displayName: true, avatarUrl: true } },
+    mentions: true,
+  } as const;
+
+  router.patch('/qa-runs/:runId/annotations/:annotationId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const annotation = run.annotations.find((item) => item.id === req.params.annotationId);
+    if (!annotation) return res.status(404).json({ error: 'ANNOTATION_NOT_FOUND' });
+    // Edits are an authorship action, distinct from resolving below: only the
+    // person who wrote the comment may change or remove it.
+    if (annotation.authorId !== req.user!.id) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
+    const parsed = UpdateQARunAnnotationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'ANNOTATION_INVALID', details: parsed.error.flatten() });
+    const input = parsed.data;
+    if (input.comment === undefined && input.mentionedUserIds === undefined) {
+      return res.status(400).json({ error: 'ANNOTATION_UPDATE_EMPTY' });
+    }
+    let mentionsUpdate: Prisma.QARunAnnotationUpdateInput['mentions'];
+    if (input.mentionedUserIds !== undefined) {
+      const mentionedUserIds = [...new Set(input.mentionedUserIds)].filter((id) => id !== req.user!.id);
+      const acceptedMembers = mentionedUserIds.length ? await prisma.organizationMembership.findMany({
+        where: { organizationId: run.organizationId, userId: { in: mentionedUserIds }, user: { deletedAt: null } },
+        select: { user: { select: { id: true, displayName: true } } },
+      }) : [];
+      if (acceptedMembers.length !== mentionedUserIds.length) {
+        return res.status(422).json({ error: 'ANNOTATION_MENTION_INVALID' });
+      }
+      mentionsUpdate = {
+        deleteMany: {},
+        create: acceptedMembers.map((membership) => ({
+          userId: membership.user.id,
+          displayNameSnapshot: membership.user.displayName || 'Tellann member',
+        })),
+      };
+    }
+    const updated = await prisma.qARunAnnotation.update({
+      where: { id: annotation.id },
+      data: {
+        ...(input.comment !== undefined ? { comment: input.comment } : {}),
+        ...(mentionsUpdate ? { mentions: mentionsUpdate } : {}),
+      },
+      include: annotationResponseInclude,
+    });
+    res.json(updated);
+  });
+
+  router.delete('/qa-runs/:runId/annotations/:annotationId', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const annotation = run.annotations.find((item) => item.id === req.params.annotationId);
+    if (!annotation) return res.status(404).json({ error: 'ANNOTATION_NOT_FOUND' });
+    if (annotation.authorId !== req.user!.id) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
+    // The screenshot artifact is left in place for existing artifact GC/retention
+    // to reclaim; deleting it here would race any report still referencing it.
+    await prisma.qARunAnnotation.delete({ where: { id: annotation.id } });
+    res.status(204).end();
+  });
+
+  router.post('/qa-runs/:runId/annotations/:annotationId/resolve', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const run = await authorizedRun(req.params.runId, req.user!.id);
+    if (!run) return res.status(404).json({ error: 'QA run not found' });
+    const annotation = run.annotations.find((item) => item.id === req.params.annotationId);
+    if (!annotation) return res.status(404).json({ error: 'ANNOTATION_NOT_FOUND' });
+    const parsed = ResolveQARunAnnotationSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'ANNOTATION_INVALID', details: parsed.error.flatten() });
+    const { resolved } = parsed.data;
+    // Resolving is a review action, not an authorship one: any member of the
+    // organization this run belongs to may toggle it (authorizedRun already
+    // scoped the lookup to that organization's membership).
+    const updated = await prisma.qARunAnnotation.update({
+      where: { id: annotation.id },
+      data: {
+        resolved,
+        resolvedAt: resolved ? new Date() : null,
+        resolvedById: resolved ? req.user!.id : null,
+      },
+      include: annotationResponseInclude,
+    });
+    res.json(updated);
+  });
+
   router.get('/qa-runs/:runId/report-status', verifyJwt, async (req: DesktopRequest, res: Response) => {
     const run = await authorizedRunLite(req.params.runId, req.user!.id);
     if (!run) return res.status(404).json({ error: 'QA run not found' });
@@ -2526,6 +2613,9 @@ export function createDesktopRouter(input: {
       sessions,
       artifacts: run.artifacts.map(safeArtifact),
       findings: run.findings.map(safeFinding),
+      // Already eagerly loaded by authorizedRun — surfaced here so the
+      // desktop Replay view can mark annotations as checkpoints.
+      annotations: run.annotations,
     });
   });
 

@@ -3424,6 +3424,10 @@ model QARunAnnotation {
   viewportBounds       Json
   windowResolution     Json
   screenshotArtifactId String?
+  resolved             Boolean         @default(false)
+  resolvedAt           DateTime?
+  resolvedById         String?
+  resolvedBy           User?           @relation("QAAnnotationResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
   createdAt            DateTime        @default(now())
   updatedAt            DateTime        @updatedAt
 
@@ -3431,6 +3435,7 @@ model QARunAnnotation {
 
   @@index([runId, createdAt])
   @@index([authorId])
+  @@index([runId, resolved])
 }
 
 model QARunAnnotationMention {
@@ -3759,6 +3764,7 @@ model User {
   paidSubscriptions       Subscription[]                @relation("SubscriptionPayer")
   qaAnnotationsAuthored   QARunAnnotation[]             @relation("QAAnnotationAuthor")
   qaAnnotationMentions    QARunAnnotationMention[]      @relation("QAAnnotationMentionUser")
+  qaAnnotationsResolved   QARunAnnotation[]             @relation("QAAnnotationResolver")
 }
 
 model AccountDeletionRequest {

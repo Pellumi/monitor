@@ -10,7 +10,9 @@ import type {
   QAInteractionMode,
   QAMentionableMember,
   QAPendingProtectedValue,
+  QARunAnnotation,
   StartGuidedRunInput,
+  UpdateQARunAnnotation,
 } from '@tellann/desktop-contracts';
 import { QA_AUTOMATION_EVENT_TYPES } from '@tellann/desktop-contracts';
 import { installQaRecorder } from './injected-recorder';
@@ -1266,6 +1268,11 @@ export class BrowserObserver {
     onEvidenceEvent?: (event: QAEvidenceEvent) => Promise<void> | void;
     onAnnotation?: (runId: string, annotation: LocalAnnotationInput, applicationId: string) => Promise<unknown> | unknown;
     searchMentionableMembers?: (runId: string, query: string) => Promise<QAMentionableMember[]>;
+    /** Existing annotations for a route, so the in-page overlay can restore pins after reload/navigation. */
+    listAnnotations?: (runId: string, normalizedRoute: string) => Promise<QARunAnnotation[]>;
+    updateAnnotation?: (runId: string, annotationId: string, input: UpdateQARunAnnotation) => Promise<unknown>;
+    deleteAnnotation?: (runId: string, annotationId: string) => Promise<void>;
+    resolveAnnotation?: (runId: string, annotationId: string, resolved: boolean) => Promise<unknown>;
     /**
      * Called, coalesced, whenever the run state changes. This is what lets the
      * renderer stop polling for a full state copy several times a second.
@@ -1886,9 +1893,25 @@ export class BrowserObserver {
     const memberName = `__tellann_members_${nonce}`;
     const annotationName = `__tellann_annotation_${nonce}`;
     const snapshotName = `__tellann_snapshot_${nonce}`;
+    const annotationsListName = `__tellann_annotations_list_${nonce}`;
+    const annotationsUpdateName = `__tellann_annotations_update_${nonce}`;
+    const annotationsDeleteName = `__tellann_annotations_delete_${nonce}`;
+    const annotationsResolveName = `__tellann_annotations_resolve_${nonce}`;
     await context.exposeBinding(bridgeName, (_source, payload: BridgePayload) => this.handleBridge(controller, payload));
     await context.exposeBinding(memberName, (_source, query: string) =>
       this.options.searchMentionableMembers?.(runId, String(query).slice(0, 100)) ?? []);
+    // Lets the overlay restore pins after a reload/navigation: fetch every
+    // annotation on this run and filter to the route the page just loaded.
+    await context.exposeBinding(annotationsListName, async (_source, normalizedRoute: string) => {
+      const list = await this.options.listAnnotations?.(runId, String(normalizedRoute)) ?? [];
+      return list.filter((item) => item.normalizedRoute === normalizedRoute);
+    });
+    await context.exposeBinding(annotationsUpdateName, (_source, annotationId: string, input: UpdateQARunAnnotation) =>
+      this.options.updateAnnotation?.(runId, annotationId, input));
+    await context.exposeBinding(annotationsDeleteName, (_source, annotationId: string) =>
+      this.options.deleteAnnotation?.(runId, annotationId));
+    await context.exposeBinding(annotationsResolveName, (_source, annotationId: string, resolved: boolean) =>
+      this.options.resolveAnnotation?.(runId, annotationId, resolved));
     // Called by the recorder as an Inspect element is picked, while the page is
     // still exactly as the operator left it and before the dialog opens. The
     // save then attaches this picture instead of taking one, so the dialog is
@@ -1932,10 +1955,9 @@ export class BrowserObserver {
             detail('Screenshot', fs.existsSync(screenshotPath) ? path.basename(screenshotPath) : 'Not captured'),
           ]),
         });
-        // Saving completes the one-shot Inspect interaction. Switch the whole
-        // run back to Navigate after the page binding returns so the modal
-        // cannot immediately reopen while the desktop still says Inspect.
-        setTimeout(() => void this.setInteractionMode('NAVIGATE').catch(() => undefined), 0);
+        // Inspect mode now stays active across multiple picks (pins persist
+        // and redraw, see installQaRecorder) — the operator switches back to
+        // Navigate explicitly rather than it happening automatically here.
         return saved;
       } catch (error) {
         this.addLive(state, {
@@ -1948,6 +1970,8 @@ export class BrowserObserver {
     });
     await context.addInitScript(installQaRecorder, {
       bridge: bridgeName, members: memberName, annotations: annotationName, snapshot: snapshotName,
+      annotationsList: annotationsListName, annotationsUpdate: annotationsUpdateName,
+      annotationsDelete: annotationsDeleteName, annotationsResolve: annotationsResolveName,
       origin: applicationOrigin, production: observationOnly,
     });
     // Protected values can be captured during IN_FLOW, so DOM/screenshot trace

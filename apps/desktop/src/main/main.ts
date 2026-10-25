@@ -6,7 +6,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, screen, session, shell } from 'electron';
-import { AUTOMATION_IPC, CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, StartGuidedRunInputSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
+import { AUTOMATION_IPC, CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, ResolveQARunAnnotationSchema, StartGuidedRunInputSchema, UpdateQARunAnnotationSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
@@ -798,6 +798,10 @@ const observer = new BrowserObserver({
   onAnnotation: (runId, annotation, applicationId) => {
     return cloud.saveAnnotation(runId, attachAnnotationSource(applicationId, annotation));
   },
+  listAnnotations: (runId) => cloud.listAnnotations(runId),
+  updateAnnotation: (runId, annotationId, input) => cloud.updateAnnotation(runId, annotationId, input),
+  deleteAnnotation: (runId, annotationId) => cloud.deleteAnnotation(runId, annotationId),
+  resolveAnnotation: (runId, annotationId, resolved) => cloud.resolveAnnotation(runId, annotationId, resolved),
   // Pushing the state is what lets the run page stop asking for a full copy of
   // it several times a second, which on a busy page meant serialising hundreds
   // of evidence rows across the IPC boundary for no new information.
@@ -2856,6 +2860,22 @@ function registerIpc(): void {
     assertTrustedSender(event);
     return cloud.deleteRun(runId);
   });
+  ipcMain.handle(IPC.listAnnotations, (event, runId: string) => {
+    assertTrustedSender(event);
+    return cloud.listAnnotations(runId);
+  });
+  ipcMain.handle(IPC.updateAnnotation, (event, runId: string, annotationId: string, input: unknown) => {
+    assertTrustedSender(event);
+    return cloud.updateAnnotation(runId, annotationId, UpdateQARunAnnotationSchema.parse(input));
+  });
+  ipcMain.handle(IPC.deleteAnnotation, (event, runId: string, annotationId: string) => {
+    assertTrustedSender(event);
+    return cloud.deleteAnnotation(runId, annotationId);
+  });
+  ipcMain.handle(IPC.resolveAnnotation, (event, runId: string, annotationId: string, resolved: unknown) => {
+    assertTrustedSender(event);
+    return cloud.resolveAnnotation(runId, annotationId, ResolveQARunAnnotationSchema.parse({ resolved }).resolved);
+  });
   ipcMain.handle(IPC.getRun, async (event, runId: unknown) => {
     assertTrustedSender(event);
     if (typeof runId !== 'string') throw new Error('INVALID_RUN_ID');
@@ -2920,7 +2940,40 @@ function registerIpc(): void {
       throw error;
     }
 
-    const documentInput = { report, generatedAt: new Date().toISOString() };
+    // Presigned artifact URLs expire in minutes and can't be written into the
+    // saved file, so screenshots are resolved to bytes and base64-embedded
+    // here, before rendering — only for the formats that can show an image.
+    let annotationScreenshots: Record<string, string> | undefined;
+    if (format === 'HTML' || format === 'PDF') {
+      const sections = (report.sections as Record<string, unknown> | undefined) ?? {};
+      const userAnnotations = Array.isArray(sections.userAnnotations)
+        ? sections.userAnnotations as Record<string, unknown>[]
+        : [];
+      const artifactIds = [...new Set(userAnnotations
+        .map((item) => item.screenshotArtifactId)
+        .filter((id): id is string => typeof id === 'string'))];
+      if (artifactIds.length) {
+        const entries = await Promise.all(artifactIds.map(async (artifactId): Promise<[string, string] | null> => {
+          try {
+            const { url } = await cloud.getArtifactDownloadUrl(value.runId as string, artifactId);
+            if (!url) return null;
+            const response = await net.fetch(url);
+            if (!response.ok) return null;
+            const buffer = Buffer.from(await response.arrayBuffer());
+            const contentType = response.headers.get('content-type') || 'image/png';
+            const dataUri: string = `data:${contentType};base64,${buffer.toString('base64')}`;
+            return [artifactId, dataUri];
+          } catch {
+            // One missing or expired artifact never blocks the whole report.
+            return null;
+          }
+        }));
+        annotationScreenshots = Object.fromEntries(
+          entries.filter((entry): entry is [string, string] => entry !== null),
+        );
+      }
+    }
+    const documentInput = { report, generatedAt: new Date().toISOString(), annotationScreenshots };
     const { buffer, extension, filterName } = await renderQualityReport(documentInput, format);
     const filename = `${qualityReportFileBase(documentInput)}.${extension}`;
     const save = await dialog.showSaveDialog(mainWindow!, {

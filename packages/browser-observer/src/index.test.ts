@@ -567,9 +567,17 @@ test('a picked element is photographed before the dialog opens, and saving never
   const source = installQaRecorder.toString();
   const select = source.slice(source.indexOf('const selectElement'), source.indexOf("shield.addEventListener('mousemove'"));
   assert.ok(select.indexOf('config.snapshot') > 0, 'selection must take the picture');
-  assert.ok(select.indexOf('config.snapshot') < select.indexOf('panel.hidden = false'), 'the picture comes first');
+  assert.ok(select.indexOf('config.snapshot') < select.indexOf('openPillForCreate(element)'), 'the picture comes first');
   const save = source.slice(source.indexOf('saveButton.addEventListener'), source.indexOf("Object.defineProperty(globalThis, '__tellannQaSetPhase'"));
   assert.doesNotMatch(save, /__tellannQaScreenshotMode/);
+});
+
+test('the outline/pin stay visible during the fallback screenshot capture — only the pill composer is hidden', () => {
+  const source = installQaRecorder.toString();
+  const start = source.indexOf("Object.defineProperty(globalThis, '__tellannQaScreenshotMode'");
+  const mode = source.slice(start, source.indexOf('configurable: false,', start));
+  assert.match(mode, /pill\.style\.visibility/, 'the pill composer must still hide for the fallback capture');
+  assert.doesNotMatch(mode, /outline\.style\.visibility/, 'the outline must stay visible so the screenshot shows the highlighted element');
 });
 
 function encodeTestPng(width: number, height: number, rgba: [number, number, number, number]): Buffer {
