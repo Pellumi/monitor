@@ -24,6 +24,7 @@ import type {
   EnvironmentKind,
   ExecutableContract,
   ExecutableTransition,
+  FormInput,
   ObservedRequest,
   Recognition,
   ScreenAnalysisReason,
@@ -537,7 +538,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     currentTransitionId = next.id;
     const stepInput = {
       control: next.control,
-      inputs: next.inputs,
+      inputs: credentialInputsForPage(next, snapshot),
       data: (key: string) => ports.data?.(key),
       label: next.action ?? next.id,
     };
@@ -738,6 +739,27 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     retrying = true;
     emit('QA_AUTOMATION_REPLAN', { reason: 'NO_PROGRESS', expected: next.to, observed: landed?.stateKey ?? null, attempt: tries });
   }
+}
+
+/**
+ * A login can be the Flow's first state rather than pre-Flow navigation. In that shape the
+ * declaration may contain only the identifier even though the live, confirmed credential form
+ * also exposes a password input. Reconcile that one security-sensitive field from the DOM before
+ * submitting, exactly as the entry/login path does; never infer arbitrary undeclared inputs.
+ */
+function credentialInputsForPage(transition: ExecutableTransition, snapshot: SemanticSnapshot): FormInput[] {
+  const inputs = [...transition.inputs];
+  if (!/(credential|log.?in|sign.?in)/i.test(transition.action ?? '')) return inputs;
+  if (inputs.some((input) => /password/i.test(input.name) || /password/i.test(input.label ?? '') || /password/i.test(input.dataKey))) return inputs;
+  const password = snapshot.elements.find((element) => element.visible && element.enabled && element.inputType === 'password');
+  if (!password) return inputs;
+  inputs.push({
+    name: password.fieldName ?? password.name ?? password.label ?? 'password',
+    label: password.label ?? password.name ?? null,
+    dataKey: 'password',
+    role: 'PROTECTED',
+  });
+  return inputs;
 }
 
 // ─────────────────────────────────────────────────────────────

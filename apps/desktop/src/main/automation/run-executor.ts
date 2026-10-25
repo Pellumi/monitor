@@ -253,7 +253,10 @@ async function execute(
           return (await input.driver.health?.()) ?? "OK";
         }
       : undefined,
-    data: data.port,
+    // Flow-internal credential submission may reconcile a live password field that static Flow
+    // extraction omitted. Run data still wins; the persona is the narrow fallback for such a
+    // credential and remains marked secret by `personaCredentialData`.
+    data: (key) => data.port(key) ?? personaCredentialData(input.persona)(key),
     handOver: stepHandOver
       ? async (request) => {
           const challenge = { kind: request.kind, detail: request.detail };

@@ -34,6 +34,37 @@ test('the happy path performs the declared transitions and stops at the target',
   assert.equal(result.states[2]!.leftVia, null, 'the terminal state is not left');
 });
 
+test('an in-Flow credential transition fills a live password field omitted by the declaration', async () => {
+  const contract: ExecutableContract = {
+    flowVersionId: 'v', flowHash: 'h', analysisIdentity: null, initialStateKey: 'login',
+    states: [state({ key: 'login', role: 'INITIAL', routePatterns: ['/login'] }), state({ key: 'dashboard', role: 'TERMINAL', routePatterns: ['/dashboard'] })],
+    transitions: [transition({
+      id: 'submit-credentials', from: 'login', to: 'dashboard', action: 'SUBMIT_CREDENTIALS',
+      control: control({ labels: ['Login'] }),
+      inputs: [{ name: 'email', label: 'Email', dataKey: 'email', role: 'PROTECTED' }],
+    })],
+  };
+  const app = new FakeApp({
+    start: 'login',
+    pages: {
+      login: { path: '/login', sdkState: 'login', elements: [
+        element({ ref: 'email', tag: 'input', inputType: 'email', fieldName: 'email', label: 'Email', formIndex: 0 }),
+        element({ ref: 'password', tag: 'input', inputType: 'password', fieldName: 'password', label: 'Password', formIndex: 0 }),
+        element({ ref: 'login', role: 'button', name: 'Login', formIndex: 0 }),
+      ] },
+      dashboard: { path: '/dashboard', sdkState: 'dashboard', elements: [] },
+    },
+    clicks: { login: 'dashboard' },
+    data: { email: { value: 'admin@example.test', secret: true }, password: { value: 'saved-password', secret: true } },
+  });
+
+  const result = await runAutomation(app, config({ contract, targetStateKey: 'dashboard' }));
+  assert.equal(result.stopReason, 'TERMINAL_STATE_REACHED');
+  assert.deepEqual(app.actions.filter((action) => action.kind === 'FILL').map((action) => [action.ref, (action as { value: string }).value]), [
+    ['email', 'admin@example.test'], ['password', 'saved-password'],
+  ]);
+});
+
 test('the event stream tells the story of the run in order', async () => {
   const app = lmsApp();
   await runAutomation(app, config());
