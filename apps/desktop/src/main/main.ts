@@ -8,6 +8,7 @@ import { Worker } from 'node:worker_threads';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, net, Notification as ElectronNotification, screen, session, shell } from 'electron';
 import { AUTOMATION_IPC, CreateApplicationInputSchema, INSTRUMENTATION_FRAMEWORK_IDS, InstrumentationPlanFiltersSchema, IPC, QAInteractionModeSchema, REPOSITORY_MISMATCH_CODE, ResolveQARunAnnotationSchema, StartGuidedRunInputSchema, UpdateQARunAnnotationSchema, type BackendEvidenceQuery, type ProtectedValueQuery, type BlastRadiusResult, type BranchPolicy, type InstrumentationFrameworkId, type CodebaseAnalysis, type CodebaseUploadConsentRequest, type CodeEntity, type CreateQARunAnnotation, type DeclaredFlowDetail, type DesktopApplication, type QAEvidenceEvent, type RepositorySnapshotSummary, type RunLifecycleEvent } from '@tellann/desktop-contracts';
 import { resolveWithinWorkspace } from '@tellann/agent-policy';
+import { classifySourceAvailability } from './annotation-source-classification';
 import type { InstrumentationProgressUpdate } from './instrumentation-controller';
 import {
   answerFromAnalysis,
@@ -891,17 +892,17 @@ function attachAnnotationSource<T extends CreateQARunAnnotation>(applicationId: 
     status, path: null, startLine: null, endLine: null, symbol: null,
     confidence: null, strategy: null, analysisId,
   } as const);
+  const hasConnectedWorkspace = Boolean(applicationId) && selectedWorkspaces.has(applicationId!);
+  const analysis = hasConnectedWorkspace ? (readAnalysisState(applicationId!)?.analysis ?? null) : null;
+  const classification = classifySourceAvailability(hasConnectedWorkspace, analysis);
   let sourceMapping: NonNullable<CreateQARunAnnotation['elementFingerprint']['sourceMapping']>;
-  if (!applicationId || !selectedWorkspaces.has(applicationId)) {
-    sourceMapping = unavailable('NOT_CONNECTED');
+  if (classification.status === 'RESOLVE') {
+    sourceMapping = resolveAnnotationSource(analysis as CodebaseAnalysis, annotation)
+      ?? unavailable('NO_MATCH', classification.analysisId);
+  } else if (classification.status === 'ANALYSIS_UNAVAILABLE') {
+    sourceMapping = unavailable('ANALYSIS_UNAVAILABLE', classification.analysisId);
   } else {
-    const analysis = readAnalysisState(applicationId)?.analysis ?? null;
-    if (!analysis || !['COMPLETED', 'PARTIAL'].includes(analysis.status)) {
-      sourceMapping = unavailable('ANALYSIS_UNAVAILABLE', analysis?.id ?? null);
-    } else {
-      sourceMapping = resolveAnnotationSource(analysis, annotation)
-        ?? unavailable('NO_MATCH', analysis.id);
-    }
+    sourceMapping = unavailable('NOT_CONNECTED');
   }
   return {
     ...annotation,

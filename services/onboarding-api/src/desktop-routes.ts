@@ -76,6 +76,17 @@ export function productionRunModeAllowed(environmentType: EnvironmentType, mode:
   return environmentType !== EnvironmentType.PRODUCTION || mode === QARunMode.OBSERVATION_ONLY;
 }
 
+/**
+ * Editing or deleting an annotation is an authorship action — only the
+ * person who wrote the comment may change or remove it. Resolving is
+ * deliberately NOT gated by this (any org member may resolve/unresolve,
+ * enforced simply by requiring no author check at that call site), since
+ * it's a review action rather than a claim about who wrote the comment.
+ */
+export function canEditOrDeleteAnnotation(annotation: { authorId: string }, userId: string): boolean {
+  return annotation.authorId === userId;
+}
+
 /** Guided and Automated runs both reconcile against a fully initialized, pinned Flow and wait for its initial boundary. */
 export function isFlowBoundedRunMode(mode: QARunMode): boolean {
   return mode === QARunMode.GUIDED || mode === QARunMode.AUTOMATED;
@@ -1775,9 +1786,7 @@ export function createDesktopRouter(input: {
     if (!run) return res.status(404).json({ error: 'QA run not found' });
     const annotation = run.annotations.find((item) => item.id === req.params.annotationId);
     if (!annotation) return res.status(404).json({ error: 'ANNOTATION_NOT_FOUND' });
-    // Edits are an authorship action, distinct from resolving below: only the
-    // person who wrote the comment may change or remove it.
-    if (annotation.authorId !== req.user!.id) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
+    if (!canEditOrDeleteAnnotation(annotation, req.user!.id)) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
     const parsed = UpdateQARunAnnotationSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ error: 'ANNOTATION_INVALID', details: parsed.error.flatten() });
     const input = parsed.data;
@@ -1818,7 +1827,7 @@ export function createDesktopRouter(input: {
     if (!run) return res.status(404).json({ error: 'QA run not found' });
     const annotation = run.annotations.find((item) => item.id === req.params.annotationId);
     if (!annotation) return res.status(404).json({ error: 'ANNOTATION_NOT_FOUND' });
-    if (annotation.authorId !== req.user!.id) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
+    if (!canEditOrDeleteAnnotation(annotation, req.user!.id)) return res.status(403).json({ error: 'ANNOTATION_NOT_AUTHOR' });
     // The screenshot artifact is left in place for existing artifact GC/retention
     // to reclaim; deleting it here would race any report still referencing it.
     await prisma.qARunAnnotation.delete({ where: { id: annotation.id } });

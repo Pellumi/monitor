@@ -58,14 +58,15 @@ function paeth(a: number, b: number, c: number): number {
   return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
 }
 
+type DecodedPng = { width: number; height: number; channels: number; stride: number; pixels: Buffer };
+
 /**
- * Fills the given rectangles (in image pixels) with the mask colour.
- *
  * Handles only what a browser screenshot actually is: 8-bit, non-interlaced,
  * truecolour with or without alpha. Anything else returns null so the caller
- * can fall back rather than ship an unmasked picture.
+ * can fall back rather than ship an unmasked (or, for a test reading pixels
+ * back, an unverifiable) picture.
  */
-export function maskPng(source: Buffer, rects: MaskRect[]): Buffer | null {
+function decodePng(source: Buffer): DecodedPng | null {
   if (source.length < 33 || !source.subarray(0, 8).equals(PNG_SIGNATURE)) return null;
   let width = 0;
   let height = 0;
@@ -119,6 +120,24 @@ export function maskPng(source: Buffer, rects: MaskRect[]): Buffer | null {
       pixels[row + x] = value & 0xff;
     }
   }
+  return { width, height, channels, stride, pixels };
+}
+
+/** A single pixel's channels (RGB or RGBA, matching the source image), for tests to assert what a capture actually contains. */
+export function readPngPixel(source: Buffer, x: number, y: number): number[] | null {
+  const decoded = decodePng(source);
+  if (!decoded || x < 0 || y < 0 || x >= decoded.width || y >= decoded.height) return null;
+  const at = y * decoded.stride + x * decoded.channels;
+  return Array.from(decoded.pixels.subarray(at, at + decoded.channels));
+}
+
+/**
+ * Fills the given rectangles (in image pixels) with the mask colour.
+ */
+export function maskPng(source: Buffer, rects: MaskRect[]): Buffer | null {
+  const decoded = decodePng(source);
+  if (!decoded) return null;
+  const { width, height, channels, stride, pixels } = decoded;
 
   for (const rect of rects) {
     const left = Math.max(0, Math.floor(rect.x));

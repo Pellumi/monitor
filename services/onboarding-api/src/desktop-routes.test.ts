@@ -1,7 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { EnvironmentType, QARunMode } from '@tellann/db';
-import { applyAutomationPhaseUpdate, assistedFlowContextShape, buildAutomationRunState, firstNonEmptyValue, isApplicationCausedStop, isFlowBoundedRunMode, isSessionScopedQaRun, parseAutomationStopReason, qaRunActiveStatus, qaRunCreationPolicy, productionRunModeAllowed, retryAutomationState, scopeQaRunCompletion } from './desktop-routes';
+import { applyAutomationPhaseUpdate, assistedFlowContextShape, buildAutomationRunState, canEditOrDeleteAnnotation, firstNonEmptyValue, isApplicationCausedStop, isFlowBoundedRunMode, isSessionScopedQaRun, parseAutomationStopReason, qaRunActiveStatus, qaRunCreationPolicy, productionRunModeAllowed, retryAutomationState, scopeQaRunCompletion } from './desktop-routes';
+
+test('only the annotation author may edit or delete it; resolving is checked separately and is not author-gated', () => {
+  const annotation = { authorId: 'user-1' };
+  assert.equal(canEditOrDeleteAnnotation(annotation, 'user-1'), true);
+  assert.equal(canEditOrDeleteAnnotation(annotation, 'user-2'), false);
+  // The PATCH/DELETE handlers call this helper directly; the resolve handler
+  // deliberately does not, which is the whole point — there is no "can
+  // resolve" helper because any org member already scoped into the run by
+  // authorizedRun may do it.
+});
 
 test('cloud policy permits only observation-only QA runs in production', () => {
   assert.equal(productionRunModeAllowed(EnvironmentType.PRODUCTION, QARunMode.OBSERVATION_ONLY), true);

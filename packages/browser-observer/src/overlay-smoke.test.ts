@@ -3,14 +3,19 @@ import test from 'node:test';
 import { chromium } from 'playwright';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { installQaRecorder } from './injected-recorder';
+import { captureMaskedViewportBuffer, readPngPixel } from './silent-capture';
 
 /**
  * Exercises `installQaRecorder` in a real headless Chromium page rather than
  * only asserting against its source text — the hover tooltip, the pin +
- * pill composer, the annotation sidebar, resolve/delete, and restore-after-
- * reload/reposition-on-scroll all have to actually happen in a live DOM, not
- * just be present in the code. Playwright's own selector engine pierces the
- * recorder's closed shadow root, so no production code is weakened for this.
+ * pill composer, the annotation sidebar, resolve/delete, restore-after-
+ * reload/reposition-on-scroll, and the screenshot highlight all have to
+ * actually happen in a live DOM and a real captured image, not just be
+ * present in the code. Playwright's locator engine cannot see into a closed
+ * shadow root (verified directly: `page.locator('.tooltip')` finds nothing
+ * against the real `mode: 'closed'` root), so `withOverlay` forces shadow
+ * roots open for this test file only, via a context-level `attachShadow`
+ * patch — `injected-recorder.ts` itself is untouched and still ships closed.
  */
 
 const ORIGIN = 'https://overlay.test';
@@ -104,6 +109,8 @@ async function withOverlay<T>(run: (page: Page, stubs: Record<string, Stub>) => 
   });
 
   try {
+    // Deterministic accent color for pixel-level screenshot assertions.
+    await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto(`${ORIGIN}${ROUTE}`);
     return await run(page, stubs);
   } finally {
@@ -200,6 +207,49 @@ test('an annotation restores as a pin after reload, and the pin tracks the eleme
     const after = await page.locator('.pin').first().boundingBox();
     assert.ok(before && after, 'the pin must have a bounding box before and after scrolling');
     assert.notEqual(after!.y, before!.y, 'the pin should have moved with the scrolled element');
+  });
+});
+
+test('a real captured screenshot shows the highlighted element, both at selection time and in the fallback capture path', async () => {
+  await withOverlay(async (page) => {
+    await page.evaluate(() => (globalThis as any).__tellannQaSetMode('INSPECT'));
+    const { x, y } = await centerOf(page, '#submit-btn');
+    await page.mouse.move(x, y);
+    const box = await page.locator('.outline').boundingBox();
+    assert.ok(box, '.outline must be positioned over the hovered element');
+
+    // Same function production uses for the pre-pick snapshot (selectElement
+    // calls `invoke(config.snapshot)` while the outline is already visible,
+    // before the pill ever opens) and for the fallback capture.
+    const beforeShot = await captureMaskedViewportBuffer(page);
+    assert.ok(beforeShot, 'captureMaskedViewportBuffer must succeed against a real page');
+    const scale = beforeShot!.readUInt32BE(16) / 1024; // image width ÷ the 1024px viewport set in withOverlay
+    const insideOutline = readPngPixel(beforeShot!, Math.round((box!.x + box!.width / 2) * scale), Math.round((box!.y + 6) * scale));
+    const plainBackground = readPngPixel(beforeShot!, Math.round(10 * scale), Math.round(10 * scale));
+    assert.ok(insideOutline && plainBackground, 'both sample points must decode to real pixels');
+    assert.ok(
+      plainBackground![0] > 230 && plainBackground![1] > 230 && plainBackground![2] > 230,
+      `expected a plain white page background away from the outline, got rgb(${plainBackground!.slice(0, 3)})`,
+    );
+    assert.notDeepEqual(
+      insideOutline!.slice(0, 3), plainBackground!.slice(0, 3),
+      'a pixel inside the outline must be visibly tinted by the accent highlight, not just the plain background',
+    );
+
+    // The exact bug B3 fixed: toggling screenshot mode (the fallback capture
+    // path's own signal to hide the composer) must hide the pill, never the
+    // outline — confirmed here against a second real capture, not just by
+    // reading what the setter's source does.
+    await page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode(true));
+    const duringFallbackCapture = await captureMaskedViewportBuffer(page);
+    await page.evaluate(() => (globalThis as any).__tellannQaScreenshotMode(false));
+    assert.ok(duringFallbackCapture, 'the fallback capture must also succeed');
+    const stillTinted = readPngPixel(duringFallbackCapture!, Math.round((box!.x + box!.width / 2) * scale), Math.round((box!.y + 6) * scale));
+    assert.ok(stillTinted);
+    assert.notDeepEqual(
+      stillTinted!.slice(0, 3), plainBackground!.slice(0, 3),
+      'the outline must still show in the fallback-path capture, not just the pre-pick one',
+    );
   });
 });
 
