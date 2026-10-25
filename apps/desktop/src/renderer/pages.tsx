@@ -21,6 +21,8 @@ import {
   BookOpenText,
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   CirclePause,
   CircleStop,
   Code2,
@@ -12025,6 +12027,8 @@ export function InstrumentationDetailPage() {
   );
 }
 
+const RUN_PAGE_SIZES = ["25", "50", "100"];
+
 function useRuns(projectId?: string) {
   const { runs, refreshRuns } = useDesktop();
   const [loading, setLoading] = useState(true);
@@ -12058,6 +12062,26 @@ function formatRunTime(value: string | null | undefined, fallback: string) {
   return value ? new Date(value).toLocaleString() : fallback;
 }
 
+type RunCategory = "completed" | "incomplete" | "failed" | "all";
+
+const RUN_INCOMPLETE_STATUSES = new Set(["COMPLETED_INCOMPLETE", "PARTIAL", "CANCELLED"]);
+
+/** Buckets a run's lifecycle status into a QA Runs page tab. A run still in flight
+ * (recording, processing, …) only matches "all" — it belongs to no finished category. */
+function categoryOfRun(status: string): Exclude<RunCategory, "all"> | "active" {
+  if (status === "COMPLETED") return "completed";
+  if (status === "FAILED") return "failed";
+  if (RUN_INCOMPLETE_STATUSES.has(status)) return "incomplete";
+  return "active";
+}
+
+const RUN_CATEGORY_TABS: Array<{ value: RunCategory; label: string }> = [
+  { value: "completed", label: "Completed" },
+  { value: "incomplete", label: "Incomplete" },
+  { value: "failed", label: "Failed" },
+  { value: "all", label: "All" },
+];
+
 export function RunsPage() {
   const { projectId, application } = useProject();
   const { items, loading, refresh } = useRuns(projectId);
@@ -12072,6 +12096,9 @@ export function RunsPage() {
   const [deleteTarget, setDeleteTarget] = useState<QARunSummary | null>(null);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState("25");
+  const [category, setCategory] = useState<RunCategory>("completed");
 
   // An instant, client-side pass over the already-cached default list while
   // the debounced, server-backed search (which alone knows about archived
@@ -12099,6 +12126,37 @@ export function RunsPage() {
   }, [projectId, query, archivedView, searchRuns, refreshToken]);
 
   const visible = searchResults ?? clientFiltered;
+
+  // Tab counts reflect the archived toggle but not the text search, so they
+  // don't jump around as the user types.
+  const categoryBase = archivedView === "false" ? items.filter((run) => !run.archivedAt) : items;
+  const categoryCounts = useMemo(() => {
+    const counts = { completed: 0, incomplete: 0, failed: 0, active: 0 };
+    for (const run of categoryBase) counts[categoryOfRun(run.status)] += 1;
+    return counts;
+  }, [categoryBase]);
+
+  const categoryFiltered = useMemo(
+    () => (category === "all" ? visible : visible.filter((run) => categoryOfRun(run.status) === category)),
+    [visible, category],
+  );
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, archivedView, category]);
+
+  const pageSizeNum = Number(pageSize);
+  const pageCount = Math.max(1, Math.ceil(categoryFiltered.length / pageSizeNum));
+  useEffect(() => {
+    if (page > pageCount) setPage(pageCount);
+  }, [page, pageCount]);
+  const pageItems = useMemo(
+    () => categoryFiltered.slice((page - 1) * pageSizeNum, page * pageSizeNum),
+    [categoryFiltered, page, pageSizeNum],
+  );
+  const firstShown = categoryFiltered.length ? (page - 1) * pageSizeNum + 1 : 0;
+  const lastShown = Math.min(categoryFiltered.length, page * pageSizeNum);
+
   const openRun = useCallback(
     (run: QARunSummary) => navigate(`/applications/${projectId}/qa-runs/${run.id}`),
     [navigate, projectId],
@@ -12119,7 +12177,7 @@ export function RunsPage() {
   };
 
   const list = useSelectableList({
-    items: visible,
+    items: pageItems,
     getKey: runKey,
     onOpen: openRun,
     onContextMenu: (run, event) => {
@@ -12210,43 +12268,107 @@ export function RunsPage() {
       {loading ? (
         <LoadingState />
       ) : items.length ? (
-        <div className="master-detail">
-          <div className="list-pane">
-            <div
-              className="list-view"
-              aria-label="QA runs"
-              style={{ "--list-columns": "minmax(160px, 1.4fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
-              {...list.listProps}
-            >
-              <div className="list-head" role="presentation">
-                <span>Run</span>
-                <span>Environment</span>
-                <span>Status</span>
-                <span>Evidence</span>
-                <span>Started</span>
-              </div>
-              {visible.map((run) => (
-                <div className="list-row" key={run.id} data-archived={run.archivedAt ? "true" : undefined} {...list.rowProps(run)}>
-                  <span className="list-cell-primary">
-                    <strong>{run.title ?? run.id.slice(0, 8)}</strong>
-                    <small className="mono">{run.id.slice(0, 8)} · {formatEnum(run.mode)}</small>
+        <>
+          <div className="run-category-bar">
+            <div className="segmented-control" role="group" aria-label="Run category">
+              {RUN_CATEGORY_TABS.map((tab) => (
+                <button
+                  key={tab.value}
+                  type="button"
+                  className={category === tab.value ? "selected" : undefined}
+                  onClick={() => setCategory(tab.value)}
+                >
+                  {tab.value === "all" ? "All runs" : tab.label}
+                  <span className="segmented-count">
+                    {tab.value === "all" ? categoryBase.length : categoryCounts[tab.value]}
                   </span>
-                  <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
-                  <span>
-                    <Status>{run.archivedAt ? "ARCHIVED" : run.status}</Status>
-                  </span>
-                  <span>
-                    {run.artifactCount} artifacts · {run.findingCount} findings
-                  </span>
-                  <span>{formatRunTime(run.startedAt, "Not started")}</span>
-                </div>
+                </button>
               ))}
-              {!visible.length ? (
-                <div className="list-empty">No runs match “{query}”.</div>
-              ) : null}
             </div>
           </div>
-          <aside className="detail-pane" aria-label="Run details">
+          <div className="master-detail">
+            <div className="list-pane list-pane-paginated">
+              <div
+                className="list-view"
+                aria-label="QA runs"
+                style={{ "--list-columns": "minmax(160px, 1.4fr) minmax(110px, 1fr) 130px minmax(120px, 1fr) minmax(140px, 1fr)" } as CSSProperties}
+                {...list.listProps}
+              >
+                <div className="list-head" role="presentation">
+                  <span>Run</span>
+                  <span>Environment</span>
+                  <span>Status</span>
+                  <span>Evidence</span>
+                  <span>Started</span>
+                </div>
+                {pageItems.map((run) => (
+                  <div className="list-row" key={run.id} data-archived={run.archivedAt ? "true" : undefined} {...list.rowProps(run)}>
+                    <span className="list-cell-primary">
+                      <strong>{run.title ?? run.id.slice(0, 8)}</strong>
+                      <small className="mono">{run.id.slice(0, 8)} · {formatEnum(run.mode)}</small>
+                    </span>
+                    <span>{run.environment?.name ?? run.environmentId.slice(0, 8)}</span>
+                    <span>
+                      <Status>{run.archivedAt ? "ARCHIVED" : run.status}</Status>
+                    </span>
+                    <span>
+                      {run.artifactCount} artifacts · {run.findingCount} findings
+                    </span>
+                    <span>{formatRunTime(run.startedAt, "Not started")}</span>
+                  </div>
+                ))}
+                {!categoryFiltered.length ? (
+                  <div className="list-empty">
+                    {query
+                      ? `No runs match “${query}”.`
+                      : category === "all"
+                        ? "No runs in this view."
+                        : `No ${RUN_CATEGORY_TABS.find((tab) => tab.value === category)?.label.toLowerCase()} runs.`}
+                  </div>
+                ) : null}
+              </div>
+              {categoryFiltered.length ? (
+                <nav className="run-history-pager" aria-label="QA run pages">
+                  <span>
+                    {firstShown}–{lastShown} of {categoryFiltered.length}
+                  </span>
+                  <div className="run-history-pager-controls">
+                    <label>
+                      Rows
+                      <SelectField
+                        ariaLabel="Rows per page"
+                        value={pageSize}
+                        onValueChange={(value) => {
+                          setPageSize(value);
+                          setPage(1);
+                        }}
+                        options={RUN_PAGE_SIZES.map((value) => ({ value, label: value }))}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={page <= 1}
+                      onClick={() => setPage((current) => current - 1)}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={14} />
+                    </button>
+                    <span>Page {page} of {pageCount}</span>
+                    <button
+                      type="button"
+                      className="button"
+                      disabled={page >= pageCount}
+                      onClick={() => setPage((current) => current + 1)}
+                      aria-label="Next page"
+                    >
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </nav>
+              ) : null}
+            </div>
+            <aside className="detail-pane" aria-label="Run details">
             {selected ? (
               <div className="detail-content">
                 <div className="detail-header">
@@ -12345,8 +12467,9 @@ export function RunsPage() {
             ) : (
               <div className="detail-empty">Select a run to see its details.</div>
             )}
-          </aside>
-        </div>
+            </aside>
+          </div>
+        </>
       ) : (
         <EmptyState
           icon={<Play size={36} />}

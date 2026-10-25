@@ -645,6 +645,19 @@ button:disabled {
   background: var(--surface-2);
   color: var(--text-strong);
 }
+.segmented-count {
+  margin-left: 6px;
+  color: var(--text-subtle);
+  font: 10px var(--font-mono);
+}
+.segmented-control button.selected .segmented-count {
+  color: var(--text-muted);
+}
+.run-category-bar {
+  flex: none;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
 .list-row[data-archived="true"] {
   opacity: 0.66;
 }
@@ -1234,6 +1247,22 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   border-left: 1px solid var(--border-subtle);
+  background: var(--surface-0);
+}
+/* A list pane with a pager footer: the row list scrolls, the pager stays put. */
+.list-pane-paginated {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.list-pane-paginated .list-view {
+  flex: 1;
+  overflow: auto;
+}
+.list-pane-paginated .run-history-pager {
+  flex: 0 0 auto;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border-subtle);
   background: var(--surface-0);
 }
 .list-view {

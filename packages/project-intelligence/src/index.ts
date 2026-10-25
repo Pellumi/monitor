@@ -29,6 +29,7 @@ const DOC_EXTENSIONS = new Set(['.md', '.txt', '.pdf', '.docx', '.html', '.htm',
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.py', '.php', '.cs', '.java']);
 const SECRET_FILE = /(^|[/\\])(\.env($|\.)|id_rsa|id_ed25519|.*\.pem$|.*\.key$)/i;
 const ROUTE_PATTERN = /(?:path|route|href)\s*[:=]\s*['"`]([^'"`]+)['"`]/g;
+const STATIC_ASSET_SUFFIX = /\.(png|jpe?g|gif|svg|ico|webp|avif|css|scss|less|js|mjs|cjs|map|woff2?|ttf|eot|otf|json|webmanifest|pdf|mp4|webm|txt)$/i;
 const ENDPOINT_PATTERN = /(?:app|router|fastify)\.(?:get|post|put|patch|delete)\(\s*['"`]([^'"`]+)['"`]/g;
 
 function detectedApplicationUrls(
@@ -338,6 +339,15 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
       }
       const absolute = path.join(directory, entry.name);
       const relative = path.relative(resolvedRoot, absolute).replaceAll('\\', '/');
+      // Checked ahead of the gitignore test: a secret file is nearly always
+      // gitignored (that is the point of it being one), so counting it only
+      // when it *isn't* ignored made "suspected secrets" undercount the
+      // common case down to zero.
+      if (!entry.isDirectory() && SECRET_FILE.test(relative)) {
+        suspectedSecrets += 1;
+        excludedFiles += 1;
+        continue;
+      }
       if (isGitIgnored(relative, entry.isDirectory(), ignoreContext)) {
         excludedFiles += 1;
         continue;
@@ -348,11 +358,6 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
       }
       if (entry.isDirectory()) {
         visit(absolute, ignoreContext);
-        continue;
-      }
-      if (SECRET_FILE.test(relative)) {
-        suspectedSecrets += 1;
-        excludedFiles += 1;
         continue;
       }
       const stat = fs.statSync(absolute);
@@ -440,7 +445,9 @@ export function scanWorkspace(root: string, options: ScanOptions): RepositorySna
       continue;
     }
     for (const match of content.matchAll(ROUTE_PATTERN)) {
-      if (match[1].startsWith('/')) routes.add(match[1]);
+      // `href` catches static assets (icons, fonts, stylesheets) as readily as
+      // navigable routes; those aren't routes and were inflating the count.
+      if (match[1].startsWith('/') && !STATIC_ASSET_SUFFIX.test(match[1])) routes.add(match[1]);
     }
     for (const match of content.matchAll(ENDPOINT_PATTERN)) endpoints.add(match[1]);
   }

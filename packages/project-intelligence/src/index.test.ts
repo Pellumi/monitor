@@ -96,6 +96,31 @@ test('does not scan a checked-in Python virtual environment as application sourc
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('counts a gitignored secret file as a suspected secret, and excludes static-asset hrefs from routes', () => {
+  // .env is gitignored in virtually every real project - that's the whole
+  // reason it's a "secret" file - so it must still be counted even though the
+  // gitignore check would otherwise exclude it first.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-secret-scan-'));
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ dependencies: { react: '^19.0.0' } }));
+  fs.writeFileSync(path.join(root, '.gitignore'), '.env\n');
+  fs.writeFileSync(path.join(root, '.env'), 'API_KEY=super-secret\n');
+  fs.mkdirSync(path.join(root, 'src'));
+  fs.writeFileSync(
+    path.join(root, 'src', 'nav.tsx'),
+    [
+      `const page = { path: '/dashboard' };`,
+      `const icon = <link href="/favicon.ico" />;`,
+    ].join('\n'),
+  );
+
+  const snapshot = scanWorkspace(root, { workspaceId: '00000000-0000-4000-8000-000000000014' });
+
+  assert.equal(snapshot.redactionSummary.suspectedSecrets, 1, 'the gitignored .env is still counted as a secret');
+  assert.ok(snapshot.routes.includes('/dashboard'));
+  assert.equal(snapshot.routes.includes('/favicon.ico'), false, 'a static asset href is not a route');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('uses root and nested gitignore rules when identifying project languages and routes', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tellann-gitignore-scan-'));
   fs.writeFileSync(path.join(root, '.gitignore'), 'staticfiles/\n*.generated.js\n');
