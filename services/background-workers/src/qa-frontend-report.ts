@@ -500,7 +500,10 @@ export function summarizeFrontendEvidence(
         // normalizedRoute here is the path of the resource fetched, not of the
         // page that fetched it.
         const route = event.normalizedRoute ?? asText(metadata.url, 200) ?? '(unknown)';
-        const key = `${route}\u0000${resourceType}`;
+        // This key is also included in the persisted report payload. PostgreSQL
+        // JSONB cannot store NUL characters, so use a JSON-safe composite key
+        // rather than the NUL delimiter that previously made report saves fail.
+        const key = JSON.stringify([route, resourceType]);
         const status = asNumber(metadata.statusCode ?? metadata.status);
         const failed = metadata.failed === true;
         const blocked = metadata.blockedByPolicy === true;
@@ -553,7 +556,7 @@ export function summarizeFrontendEvidence(
         else if (level === 'warning' || level === 'warn') consoleWarnings += 1;
         else break;
         const message = asText(metadata.message, 400) ?? 'Console output';
-        const key = `${level}\u0000${message}`;
+        const key = JSON.stringify([level, message]);
         const existing = consoleGroups.get(key);
         if (existing) {
           existing.occurrences += 1;
