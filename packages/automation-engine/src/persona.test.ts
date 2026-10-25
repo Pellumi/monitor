@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   checkRunDataAvailability, classifyRunDataValue, materializeRunData, missingRunDataKeys,
-  personaCredentialData, personaForPlanner, personaRequiresLogin, protectedValueFor, runDataFingerprint, runDataPort,
+  personaCredentialData, personaForPlanner, personaRequiresLogin, protectedValueFor, resolveRunData, runDataFingerprint, runDataPort,
 } from './persona';
 import { lmsContract } from './test-fixtures';
 import type { RunDataSet, TestPersona } from '@tellann/desktop-contracts';
@@ -71,6 +71,22 @@ test('preflight availability fails fast with every missing key named, before any
   }
   const supplied = materializeRunData(dataSet([{ key: 'examTitle', generator: { kind: 'LITERAL', value: 'x' }, secret: false }]));
   assert.deepEqual(checkRunDataAvailability(lmsContract(), supplied), { ok: true });
+});
+
+test('an empty protected data value falls back to the persona credential instead of filling an empty password', () => {
+  const contract = { ...lmsContract(), transitions: [{
+    ...lmsContract().transitions[0]!,
+    inputs: [{ name: 'password', label: 'Password', dataKey: 'ADMIN_PASSWORD', role: 'PROTECTED' as const }],
+  }] };
+  const materialized = materializeRunData(dataSet([{ key: 'ADMIN_PASSWORD', generator: { kind: 'LITERAL', value: '' }, secret: true }]));
+  const resolved = resolveRunData(contract, materialized, persona());
+  assert.deepEqual(resolved.missing, []);
+  assert.deepEqual(resolved.port('ADMIN_PASSWORD'), { value: 'hunter2', secret: true });
+});
+
+test('an empty ordinary data value is missing at preflight rather than accepted as a no-op fill', () => {
+  const materialized = materializeRunData(dataSet([{ key: 'examTitle', generator: { kind: 'LITERAL', value: '' }, secret: false }]));
+  assert.deepEqual(missingRunDataKeys(lmsContract(), materialized), ['examTitle']);
 });
 
 test('the planner persona is built from the session state, never from the identity\'s own authenticated flag', () => {

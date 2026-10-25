@@ -74,7 +74,7 @@ type DraftGeneration = {
  */
 function isTransientProviderFailure(attempts: ProviderAttempt[]): boolean {
   return attempts.length > 0 && attempts.every((attempt) =>
-    /(?:408|429|500|502|503|504)|TIMEOUT|circuit open|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(attempt.error));
+    /\b(?:408|429|500|502|503|504)\b|TIMEOUT|circuit open|fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN/i.test(attempt.error));
 }
 
 /** Thrown to hand a job back to the queue so a passing outage does not decide the draft. */

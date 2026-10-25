@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { AllProvidersFailedError, FallbackProvider, buildProviderChain, generateAiFlowDraft, resolveAiProvider } from './index';
+import { AllProvidersFailedError, FallbackProvider, JsonHttpProvider, buildProviderChain, describeProviderError, generateAiFlowDraft, resolveAiProvider } from './index';
 
 const ENV = { AI_PROVIDER: 'gemini', GEMINI_API_KEY: 'test-key', GEMINI_MODEL: 'model-preferred' };
 
@@ -112,5 +112,25 @@ describe('FallbackProvider', () => {
     const provider = new FallbackProvider([first as any, second as any]);
     await expect(provider.generateStructured({ prompt: 'p', schema: z.object({}), signal: controller.signal })).rejects.toThrow('aborted');
     expect(second.generateStructured).not.toHaveBeenCalled();
+  });
+});
+
+describe('structured response recovery', () => {
+  it('automatically repairs invalid structured JSON without a caller-supplied repair prompt', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: '{"wrong":true}' } }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const provider = new JsonHttpProvider('gemini', 'model', 'https://example.test', 'key');
+
+    const result = await provider.generateStructured({ prompt: 'answer', schema: z.object({ ok: z.boolean() }) });
+
+    expect(result).toMatchObject({ data: { ok: true }, repaired: true });
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).messages[0].content).toContain('VALIDATION ERRORS');
+  });
+
+  it('summarizes schema issues instead of logging an unreadable JSON array', () => {
+    const error = z.object({ suggestions: z.array(z.string()) }).safeParse({}).error!;
+    expect(describeProviderError(error)).toBe('suggestions: Required');
   });
 });

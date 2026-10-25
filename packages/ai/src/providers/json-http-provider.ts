@@ -257,10 +257,23 @@ export class JsonHttpProvider implements AIProvider {
         return { data, rawText: invalidText, repaired: false };
       } catch (error) {
         lastError = error;
-        if (input.repairPrompt && invalidText && !(error instanceof FetchError)) {
+        if (invalidText && !(error instanceof FetchError)) {
           try {
             const details = error instanceof Error ? error.message : String(error);
-            const repairedText = await this.callStructuredPrompt(input.repairPrompt(invalidText, details), controller.signal);
+            const repairPrompt = input.repairPrompt
+              ? input.repairPrompt(invalidText, details)
+              : buildStructuredRepairPrompt(invalidText, details);
+            const repairController = new AbortController();
+            const repairTimeout = setTimeout(() => repairController.abort(), this.repairTimeoutMs);
+            const abortRepair = () => repairController.abort();
+            input.signal?.addEventListener('abort', abortRepair, { once: true });
+            let repairedText: string;
+            try {
+              repairedText = await this.callStructuredPrompt(repairPrompt, repairController.signal, input.maxOutputTokens);
+            } finally {
+              clearTimeout(repairTimeout);
+              input.signal?.removeEventListener('abort', abortRepair);
+            }
             const data = input.schema.parse(extractJson(repairedText));
             recordSuccess(this.circuitKey);
             return { data, rawText: repairedText, repaired: true };
@@ -304,7 +317,10 @@ export class JsonHttpProvider implements AIProvider {
       }),
       signal,
     });
-    if (!res.ok) throw new FetchError(`${this.name} provider failed with ${res.status}`, res.status);
+    if (!res.ok) {
+      const detail = await describeProviderFailure(res);
+      throw new FetchError(`${this.name} provider failed with ${res.status}${detail ? `: ${detail}` : ''}`, res.status);
+    }
     const payload = await res.json() as any;
     return payload?.choices?.[0]?.message?.content ?? payload?.candidates?.[0]?.content?.parts?.[0]?.text ?? payload?.text ?? JSON.stringify(payload);
   }
@@ -567,6 +583,24 @@ function buildRepairPrompt(invalidJson: string, validationErrors: string): strin
     validationErrors,
     '',
     'INVALID JSON TO REPAIR:',
+    truncated,
+  ].join('\n');
+}
+
+/** Repair arbitrary structured output using the exact validation failures. */
+function buildStructuredRepairPrompt(invalidJson: string, validationErrors: string): string {
+  const truncated = invalidJson.length > 12_000
+    ? `${invalidJson.slice(0, 12_000)}\n...[truncated]`
+    : invalidJson;
+  return [
+    'Return ONLY one valid JSON object. Do not use markdown or add commentary.',
+    'Correct the response so every validation error below is resolved.',
+    'Keep all otherwise valid facts and fields. Do not invent evidence or identifiers.',
+    '',
+    'VALIDATION ERRORS:',
+    validationErrors,
+    '',
+    'RESPONSE TO CORRECT:',
     truncated,
   ].join('\n');
 }

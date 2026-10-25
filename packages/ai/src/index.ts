@@ -114,7 +114,7 @@ function geminiProvider(env: NodeJS.ProcessEnv, model: string, timeoutMs?: numbe
 function deepseekProvider(env: NodeJS.ProcessEnv, timeoutMs?: number): JsonHttpProvider {
   return new JsonHttpProvider(
     'deepseek',
-    env.DEEPSEEK_MODEL || 'deepseek-chat',
+    env.DEEPSEEK_MODEL || 'deepseek-flash',
     env.DEEPSEEK_API_URL || 'https://api.deepseek.com/chat/completions',
     env.DEEPSEEK_API_KEY!,
     timeoutMs ? { timeoutMs } : undefined,
