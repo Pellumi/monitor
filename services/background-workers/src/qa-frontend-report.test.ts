@@ -169,6 +169,8 @@ test('network rows group by resource path and type, and a policy block is not a 
   assert.equal(api.serverErrors, 1);
   assert.equal(api.blocked, 1);
   assert.equal(api.failed, 0);
+  assert.equal(api.key, JSON.stringify(['/api/orders', 'xhr']));
+  assert.ok(!JSON.stringify(summary).includes('\\u0000'), 'report payload must be safe for PostgreSQL JSONB');
 });
 
 test('the interaction funnel says why pre-boundary submits have no outcome', () => {

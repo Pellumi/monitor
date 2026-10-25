@@ -207,7 +207,17 @@ export class StorageClient {
    * presigned after the fact until replay manifests did, which is what made a latent
    * asymmetry a live bug.
    */
-  async presign(key: string, ttlSeconds = 86400): Promise<string> {
+  async presign(key: string, ttlSeconds = 86400, adapterName?: string): Promise<string> {
+    // Objects can outlive a storage failover. When the caller persisted which
+    // adapter accepted the upload, honor that location instead of blindly
+    // signing with today's primary. Presigning does not contact S3, so a key
+    // that only exists in Firebase otherwise produces a valid-looking S3 URL
+    // which fails with 404 when the browser finally requests it.
+    if (adapterName) {
+      if (this.primary.name === adapterName) return this.primary.presign(key, ttlSeconds);
+      if (this.fallback?.name === adapterName) return this.fallback.presign(key, ttlSeconds);
+      throw new Error(`Storage adapter unavailable: ${adapterName}`);
+    }
     try {
       return await this.primary.presign(key, ttlSeconds);
     } catch (error) {

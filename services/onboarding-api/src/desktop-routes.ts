@@ -2545,7 +2545,11 @@ export function createDesktopRouter(input: {
     const artifact = run.artifacts.find((candidate) => candidate.id === req.params.artifactId);
     if (!artifact?.objectKey) return res.status(404).json({ error: 'Artifact content not available' });
     try {
-      res.json({ url: await storage.presign(artifact.objectKey, 15 * 60), expiresInSeconds: 900 });
+      const metadata = artifact.metadata && typeof artifact.metadata === 'object' && !Array.isArray(artifact.metadata)
+        ? artifact.metadata as Record<string, unknown>
+        : {};
+      const storageAdapter = typeof metadata.storageAdapter === 'string' ? metadata.storageAdapter : undefined;
+      res.json({ url: await storage.presign(artifact.objectKey, 15 * 60, storageAdapter), expiresInSeconds: 900 });
     } catch {
       res.status(503).json({ error: 'ARTIFACT_DOWNLOAD_UNAVAILABLE' });
     }
