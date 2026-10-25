@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { anchorAiSuggestion, deriveFlowAnalysis, isInFlow, normalize, resolveFindingScope } from './qa-report-worker';
+import {
+  anchorAiSuggestion, deriveFlowAnalysis, groupAccessibilityFindings, isInFlow, normalize,
+  parseA11yDedupeKey, resolveFindingScope,
+} from './qa-report-worker';
 import { percentileOf, summarizeBackendEvidence } from './qa-backend-report';
 
 const KNOWN = {
@@ -234,4 +237,75 @@ test('report percentiles are nearest-rank, matching what the run showed live', (
   assert.equal(percentileOf([], 95), null);
   assert.equal(percentileOf([10, 20, 30, 40], 50), 20);
   assert.equal(percentileOf([10], 99), 10);
+});
+
+test('an accessibility dedupeKey parses into its rule and route', () => {
+  assert.deepEqual(parseA11yDedupeKey('a11y:color-contrast:/settings'), { ruleId: 'color-contrast', route: '/settings' });
+  // a route containing ':' (unlikely, but never trusted) still parses without throwing
+  assert.deepEqual(parseA11yDedupeKey('a11y:button-name:/course/441:published'), { ruleId: 'button-name', route: '/course/441:published' });
+});
+
+test('a malformed or legacy dedupeKey never throws, just fails to parse', () => {
+  assert.equal(parseA11yDedupeKey(null), null);
+  assert.equal(parseA11yDedupeKey(undefined), null);
+  assert.equal(parseA11yDedupeKey(''), null);
+  assert.equal(parseA11yDedupeKey('console:abc123'), null, 'wrong prefix');
+  assert.equal(parseA11yDedupeKey('a11y:'), null, 'no route, no rule id');
+  assert.equal(parseA11yDedupeKey('a11y:only-rule-id'), null, 'missing route segment entirely');
+});
+
+function rawFinding(overrides: Partial<{
+  id: string; severity: string; category: string | null; dedupeKey: string | null; title: string;
+  confidence: number; reproductionSteps: unknown; evidenceEventIds: string[]; scope: string | null;
+}> = {}) {
+  const { evidenceEventIds = [], ...rest } = overrides;
+  return {
+    id: 'finding-1', severity: 'MEDIUM', generatorSource: 'BROWSER', category: 'ACCESSIBILITY_VIOLATION',
+    dedupeKey: 'a11y:color-contrast:/settings', title: 'Elements must meet minimum color contrast ratio thresholds',
+    description: '5 element(s) on /settings fail color-contrast.', confidence: 0.9,
+    recommendation: 'Resolve the accessibility rule failure and rerun the affected Flow state.',
+    relatedStateName: null, evidenceEvents: evidenceEventIds.map((evidenceEventId) => ({ evidenceEventId })),
+    reproductionSteps: ['Open the captured route', 'Inspect the reported elements'], scope: null,
+    ...rest,
+  };
+}
+
+test('accessibility findings for the same rule on different routes merge into one, with both routes listed', () => {
+  const rows = [
+    rawFinding({ id: 'f1', dedupeKey: 'a11y:color-contrast:/settings', evidenceEventIds: ['ev-1'] }),
+    rawFinding({ id: 'f2', dedupeKey: 'a11y:color-contrast:/dashboard', evidenceEventIds: ['ev-2'] }),
+  ];
+  const [grouped] = groupAccessibilityFindings(rows, [], false, false);
+  assert.equal(grouped.id, 'a11y-rule:color-contrast');
+  assert.deepEqual(grouped.affectedRoutes, ['/settings', '/dashboard']);
+  assert.deepEqual(grouped.evidenceIds, ['ev-1', 'ev-2']);
+});
+
+test('priority escalates to HIGH if any merged row is HIGH', () => {
+  const rows = [
+    rawFinding({ id: 'f1', severity: 'MEDIUM' }),
+    rawFinding({ id: 'f2', severity: 'HIGH', dedupeKey: 'a11y:color-contrast:/dashboard' }),
+  ];
+  const [grouped] = groupAccessibilityFindings(rows, [], false, false);
+  assert.equal(grouped.priority, 'HIGH');
+});
+
+test('a grouped finding is enriched with real element selectors when the rule rollup has them', () => {
+  const rows = [rawFinding()];
+  const rule = { ruleId: 'color-contrast', help: '...', impact: 'serious', occurrences: 1, nodes: 5, routes: ['/settings'], targets: ['button.save', '.nav-link'] };
+  const [grouped] = groupAccessibilityFindings(rows, [rule], false, false);
+  assert.deepEqual(grouped.reproductionPath, ['Open the captured route', 'Inspect button.save', 'Inspect .nav-link']);
+});
+
+test('a grouped finding falls back to the original reproduction steps when no rule match exists', () => {
+  const rows = [rawFinding()];
+  const [grouped] = groupAccessibilityFindings(rows, [], false, false);
+  assert.deepEqual(grouped.reproductionPath, ['Open the captured route', 'Inspect the reported elements']);
+});
+
+test('a malformed dedupeKey on an accessibility row is never dropped — it falls back to the individual mapping', () => {
+  const rows = [rawFinding({ id: 'f1', dedupeKey: null })];
+  const result = groupAccessibilityFindings(rows, [], false, false);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].id, 'f1', 'the individual finding id survives, not a synthesized group id');
 });

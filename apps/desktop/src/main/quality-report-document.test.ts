@@ -667,3 +667,208 @@ test('a report from before any of this was measured still renders', () => {
     assert.ok(!html.includes(absent), absent);
   }
 });
+
+// ── Verification verdict, severity caveats, low-sample honesty ─────────────
+
+test('a session-scoped report shows "Not measured", not a bare zero, for states and transitions', () => {
+  const session = input({
+    scopeKind: 'SESSION',
+    flow: null,
+    coverage: { expected: null, reconciledFlows: 0 },
+    sections: {
+      ...(input().report as any).sections,
+      flowSummary: null,
+      inFlowFindings: { recommendedNextActions: [], findings: [], missingStates: [], missingTransitions: [], unexpectedStates: [] },
+      criticalSystemWideFindings: [],
+    },
+  });
+  const html = qualityReportHtml(session);
+  assert.ok(html.includes('Not measured — this run declared no Flow to verify against'));
+  assert.ok(html.includes('Not available for a session-scoped run'));
+  assert.ok(!/Observed states<\/span><strong>0<\/strong>/.test(html), 'a session run never claims a real zero');
+});
+
+test('a known completion reason renders as prose, not a raw enum string', () => {
+  const html = qualityReportHtml(input({
+    sections: {
+      ...(input().report as any).sections,
+      runSummary: { ...(input().report as any).sections.runSummary, boundaryOutcome: 'MANUAL_STOP_BEFORE_TERMINAL' },
+    },
+  }));
+  assert.ok(html.includes('Partial — stopped before the declared end'));
+  assert.ok(html.includes('stopped manually before reaching its declared terminal state'));
+  assert.ok(!html.includes('MANUAL_STOP_BEFORE_TERMINAL</strong>'), 'the raw enum never leaks into the headline itself');
+});
+
+test('an unmapped completion reason falls back to an honest sentence rather than throwing', () => {
+  const html = qualityReportHtml(input({
+    sections: {
+      ...(input().report as any).sections,
+      runSummary: { ...(input().report as any).sections.runSummary, boundaryOutcome: 'SOME_FUTURE_REASON' },
+    },
+  }));
+  assert.ok(html.includes('completion reason was not recorded'));
+  assert.ok(html.includes('Outcome not recorded'));
+});
+
+test('a report with no completion reason at all renders with no verdict notice', () => {
+  const html = qualityReportHtml(input());
+  assert.ok(!html.includes('Outcome not recorded'));
+  assert.ok(!html.includes('completion reason was not recorded'));
+});
+
+test('an HTTP-error finding gets a verify-before-defect caveat; one with no category gets none', () => {
+  const withCategory = input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{ id: 'f1', priority: 'MEDIUM', category: 'HTTP_ERROR_RESPONSE', title: 'Request returned 401', impact: 'POST /login — 401', confidence: 0.98 }],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  });
+  assert.ok(qualityReportHtml(withCategory).includes('confirm what the request was for before treating this as a defect'));
+
+  const legacyNoCategory = input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{ id: 'f1', priority: 'MEDIUM', title: 'Request returned 401', impact: 'POST /login — 401', confidence: 0.98 }],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  });
+  const html = qualityReportHtml(legacyNoCategory);
+  assert.ok(!html.includes('confirm what the request was for'), 'a pre-Phase-B stored report has no category, so no caveat is fabricated');
+});
+
+test('a console-error finding gets the console-specific caveat', () => {
+  const html = qualityReportHtml(input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{ id: 'f1', priority: 'MEDIUM', category: 'BROWSER_CONSOLE_ERROR', title: 'Browser console error', impact: 'TypeError: x is undefined', confidence: 0.95 }],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  }));
+  assert.ok(html.includes('expected noise from third-party scripts'));
+});
+
+test('a finding with routes merged from several pages lists them as affected routes', () => {
+  const html = qualityReportHtml(input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{
+          id: 'a11y-rule:color-contrast', priority: 'MEDIUM', category: 'ACCESSIBILITY_VIOLATION',
+          title: 'Elements must meet minimum color contrast ratio thresholds',
+          impact: '9 element(s) across 3 route(s) fail color-contrast.', confidence: 0.9,
+          affectedRoutes: ['/settings', '/dashboard', '/course/:id'],
+        }],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  }));
+  assert.ok(html.includes('AFFECTED ROUTES'));
+  assert.ok(html.includes('/settings, /dashboard, /course/:id'));
+});
+
+test('a route measured on too few samples shows the observed value, not a percentile claim', () => {
+  const html = qualityReportHtml(frontendInput());
+  assert.ok(html.includes('too few to call these percentiles'), '3 samples does not support a p50/p75/p95 claim');
+});
+
+test('a route measured on enough samples still shows the ordinary percentile phrasing', () => {
+  const wellSampled = frontendInput();
+  (wellSampled.report as any).sections.frontendSummary.routes[0].lcpMs = { p50: 200, p75: 240, p95: 300, samples: 50 };
+  const html = qualityReportHtml(wellSampled);
+  assert.ok(html.includes('200 ms p50 · 240 ms p75 · 300 ms p95'));
+  assert.ok(!html.includes('200 ms observed over'));
+});
+
+test('the "two different severity scales" explainer is always present in the findings index', () => {
+  const html = qualityReportHtml(input());
+  assert.ok(html.includes('Two different severity scales'));
+  assert.ok(html.includes('is not a contradiction'));
+});
+
+// ── Immediate attention / priority ordering ─────────────────────────────────
+
+function mixedPriorityInput() {
+  return input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [
+          { id: 'low-1', priority: 'LOW', title: 'A low-priority finding', impact: 'Minor.', confidence: 0.5 },
+          { id: 'ai-high', priority: 'HIGH', generator: 'AI', title: 'An AI-sourced high finding appended out of order', impact: 'Significant.', confidence: 0.8 },
+          { id: 'crit-1', priority: 'CRITICAL', title: 'A critical finding', impact: 'Severe.', confidence: 0.95 },
+          { id: 'med-1', priority: 'MEDIUM', title: 'A medium finding', impact: 'Moderate.', confidence: 0.7 },
+          { id: 'high-2', priority: 'HIGH', title: 'A second high finding', impact: 'Significant too.', confidence: 0.85 },
+        ],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  });
+}
+
+test('the Immediate attention callout lists only CRITICAL/HIGH, in priority order, capped at three', () => {
+  const html = qualityReportHtml(mixedPriorityInput());
+  const calloutStart = html.indexOf('Immediate attention');
+  const calloutEnd = html.indexOf('</ul>', calloutStart);
+  const callout = html.slice(calloutStart, calloutEnd);
+  assert.ok(!callout.includes('A low-priority finding'));
+  assert.ok(!callout.includes('A medium finding'));
+  assert.ok(callout.indexOf('A critical finding') < callout.indexOf('An AI-sourced high finding'));
+  // Exactly 3 <li> entries: CRITICAL, then the two HIGHs — the callout caps at 3.
+  assert.equal((callout.match(/<li>/g) ?? []).length, 3);
+});
+
+test('the Findings Index itself is fully priority-ordered, including AI-sourced findings appended out of order upstream', () => {
+  const html = qualityReportHtml(mixedPriorityInput());
+  const indexStart = html.indexOf('Ordered by priority');
+  const indexEnd = html.indexOf('Recommended next actions', indexStart);
+  const index = html.slice(indexStart, indexEnd === -1 ? html.indexOf('How to read priority', indexStart) : indexEnd);
+  assert.ok(index.indexOf('A critical finding') < index.indexOf('An AI-sourced high finding appended out of order'));
+  assert.ok(index.indexOf('An AI-sourced high finding appended out of order') < index.indexOf('A medium finding'));
+  assert.ok(index.indexOf('A medium finding') < index.indexOf('A low-priority finding'));
+});
+
+// ── Evidence appendix trim ──────────────────────────────────────────────────
+
+test('the evidence appendix never prints more rows than the event limit, even with many more events captured', () => {
+  const manyEvents = input({
+    sections: {
+      ...(input().report as any).sections,
+      evidenceAppendix: {
+        events: Array.from({ length: 80 }, (_, i) => ({ id: `e${i}`, type: 'QA_REQUEST', route: '/login', scope: 'IN_FLOW' })),
+        eventTotal: 80,
+        eventsTruncated: 0,
+        limitations: [],
+      },
+    },
+  });
+  const html = qualityReportHtml(manyEvents);
+  const appendixStart = html.indexOf('Evidence index');
+  const appendixSection = html.slice(appendixStart, html.indexOf('</table>', appendixStart));
+  const rowCount = (appendixSection.match(/<tr>/g) ?? []).length;
+  assert.ok(rowCount <= 50, `expected at most 50 rows, got ${rowCount}`);
+  assert.ok(html.includes('further event(s) are not printed'));
+});
+
+// ── Chapter order ────────────────────────────────────────────────────────────
+
+test('declared coverage gaps are shown right after the Flow declaration, ahead of run capture and findings', () => {
+  const html = qualityReportHtml(input());
+  const flowIndex = html.indexOf('What the Flow declared');
+  const gapsIndex = html.indexOf('Declared coverage gaps');
+  const runIndex = html.indexOf('How the run was captured');
+  assert.ok(flowIndex < gapsIndex, 'Flow declaration comes first');
+  assert.ok(gapsIndex < runIndex, 'coverage gaps come before run-capture details');
+});

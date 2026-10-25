@@ -26,7 +26,7 @@ import { NotificationEmailService, NotificationOrchestrator, appUrl } from '@tel
 import { Feature } from '@tellann/shared';
 import { z } from 'zod';
 import { summarizeBackendEvidence, type BackendReportSection } from './qa-backend-report';
-import { summarizeFrontendEvidence, type FrontendReportSection } from './qa-frontend-report';
+import { summarizeFrontendEvidence, type FrontendReportSection, type FrontendAccessibilityRule } from './qa-frontend-report';
 import { appendixLimitation, selectAppendixEvents } from './qa-evidence-appendix';
 import { NO_BASELINE, baselineKey, compareToBaseline, fetchEndpointBaselines } from './qa-endpoint-baseline';
 import { NO_RESOLUTIONS, draftBackendFindingResolutions, type ResolutionOutcome } from './qa-finding-resolution';
@@ -135,6 +135,121 @@ export function anchorAiSuggestion<T extends {
     : null;
   if (!evidenceIds.length && affectedState === null && affectedTransition === null) return null;
   return { ...suggestion, evidenceIds, affectedState, affectedTransition };
+}
+
+/** The shape every deterministic/AI/grouped finding is normalized to before it reaches a report. */
+export type ReportFinding = {
+  id: string; priority: string; generator: string; category: string | null; dedupeKey: string | null;
+  title: string; impact: string; confidence: number; rationale: string; suggestedAction: string;
+  expectedOutcome: string; affectedState: string | null; affectedTransition: string | null;
+  evidenceIds: string[]; effort: string; reproductionPath: unknown[]; scope?: string;
+  affectedRoutes?: string[];
+};
+
+type RawFinding = {
+  id: string; severity: string; generatorSource: string; category: string | null; dedupeKey: string | null;
+  title: string; description: string; confidence: number; recommendation: string | null;
+  relatedStateName: string | null; evidenceEvents: { evidenceEventId: string }[];
+  reproductionSteps: unknown; scope: string | null;
+};
+
+/**
+ * The ordinary one-row-per-BrowserFinding mapping, factored out so the accessibility
+ * grouping path (which only replaces SOME rows) can share it with the rest.
+ *
+ * Deliberately not typed to return `ReportFinding` (the `satisfies` below checks the
+ * shape without it): the result is eventually written into a Prisma `Json` field, which
+ * requires an index signature that a named type/interface doesn't carry, while a fresh
+ * inferred object literal type is structurally compatible without one.
+ */
+function mapSingleFinding(
+  finding: RawFinding,
+  hasDeclaredFlow: boolean,
+  boundaryStarted: boolean,
+) {
+  return {
+    id: finding.id, priority: finding.severity, generator: finding.generatorSource,
+    category: finding.category, dedupeKey: finding.dedupeKey ?? null,
+    title: finding.title, impact: finding.description, confidence: finding.confidence,
+    rationale: finding.description, suggestedAction: finding.recommendation || 'Investigate the linked evidence and repeat the affected step.',
+    expectedOutcome: 'The affected interaction completes reliably without the captured failure.',
+    affectedState: finding.relatedStateName, affectedTransition: null,
+    evidenceIds: finding.evidenceEvents.map((link) => link.evidenceEventId), effort: 'MEDIUM',
+    reproductionPath: Array.isArray(finding.reproductionSteps) ? finding.reproductionSteps : [],
+    // A finding with no recorded scope must not silently pass as in-Flow:
+    // resolve it from the run's boundary instead.
+    scope: hasDeclaredFlow ? resolveFindingScope(finding.scope, boundaryStarted) : 'SESSION',
+    // Present (as undefined) on every finding, grouped or not, so both shapes
+    // structurally match — a mixed array never loses the field through narrowing.
+    affectedRoutes: undefined as string[] | undefined,
+  } satisfies ReportFinding;
+}
+
+/**
+ * `BrowserFinding.dedupeKey` for an accessibility violation is written as
+ * `a11y:${axeRuleId}:${route}` (packages/browser-observer). Parsed defensively:
+ * a malformed or legacy key (missing prefix, no route) is never thrown on —
+ * the caller falls back to treating that row individually.
+ */
+export function parseA11yDedupeKey(dedupeKey: string | null | undefined): { ruleId: string; route: string } | null {
+  if (!dedupeKey) return null;
+  const parts = dedupeKey.split(':');
+  if (parts.length < 3 || parts[0] !== 'a11y') return null;
+  const ruleId = parts[1];
+  if (!ruleId) return null;
+  return { ruleId, route: parts.slice(2).join(':') };
+}
+
+/**
+ * Accessibility findings are generated one row per (rule, route) at the
+ * source, so the same axe rule shows up as several near-identical findings
+ * whenever it fails on more than one route. `frontendSummary.accessibility.rules`
+ * already recomputes the same evidence grouped correctly by rule — including
+ * real element selectors (`targets`) the per-row findings never carried — so
+ * this merges the BrowserFinding rows back down to one finding per rule and
+ * joins the selectors in. Rows whose dedupeKey doesn't parse (legacy data, or
+ * a future generator change) are never dropped — they fall back to the
+ * ordinary per-row mapping instead of being grouped.
+ */
+export function groupAccessibilityFindings(
+  findings: RawFinding[],
+  a11yRules: FrontendAccessibilityRule[],
+  hasDeclaredFlow: boolean,
+  boundaryStarted: boolean,
+) {
+  const rulesById = new Map(a11yRules.map((rule) => [rule.ruleId, rule]));
+  const byRuleId = new Map<string, RawFinding[]>();
+  const unparsed: RawFinding[] = [];
+  for (const finding of findings) {
+    const parsed = parseA11yDedupeKey(finding.dedupeKey);
+    if (!parsed) { unparsed.push(finding); continue; }
+    byRuleId.set(parsed.ruleId, [...(byRuleId.get(parsed.ruleId) ?? []), finding]);
+  }
+  const grouped = [...byRuleId.entries()].map(([ruleId, rows]) => {
+    const first = rows[0];
+    const rule = rulesById.get(ruleId); // may be absent if the rollup hit its own rule-count limit
+    const routes = [...new Set(rows.map((r) => parseA11yDedupeKey(r.dedupeKey)!.route))];
+    return {
+      id: `a11y-rule:${ruleId}`,
+      priority: rows.some((r) => r.severity === 'HIGH') ? 'HIGH' : 'MEDIUM',
+      generator: first.generatorSource, category: first.category, dedupeKey: `a11y-rule:${ruleId}`,
+      title: first.title,
+      impact: `${rule?.nodes ?? rows.length} element(s) across ${routes.length} route(s) fail ${ruleId}.`,
+      confidence: Math.max(...rows.map((r) => r.confidence)),
+      rationale: first.description,
+      suggestedAction: first.recommendation || 'Investigate the linked evidence and repeat the affected step.',
+      expectedOutcome: 'The affected interaction completes reliably without the captured failure.',
+      affectedState: first.relatedStateName, affectedTransition: null,
+      evidenceIds: rows.flatMap((r) => r.evidenceEvents.map((e) => e.evidenceEventId)),
+      effort: 'MEDIUM',
+      reproductionPath: rule?.targets.length
+        ? ['Open the captured route', ...rule.targets.map((t) => `Inspect ${t}`)]
+        : (Array.isArray(first.reproductionSteps) ? first.reproductionSteps : []),
+      affectedRoutes: routes,
+      scope: hasDeclaredFlow ? resolveFindingScope(first.scope, boundaryStarted) : 'SESSION',
+    } satisfies ReportFinding;
+  });
+  return [...grouped, ...unparsed.map((finding) => mapSingleFinding(finding, hasDeclaredFlow, boundaryStarted))];
 }
 
 // ─── Summary sentence and coverage confidence ────────────────────────────
@@ -457,9 +572,37 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   const { missingStates, missingTransitions, unexpectedStates } = flowAnalysis;
 
   await prisma.qAReport.update({ where: { id: reportId }, data: { status: QAReportStatus.ANALYZING, rulesStatus: 'RUNNING' } });
+  // Computed ahead of `deterministic` (rather than where it used to sit, after)
+  // because grouping accessibility findings below needs frontendSummary's
+  // already-correctly-grouped `accessibility.rules` (with real element
+  // selectors) to join against. Re-derived from the persisted evidence rather
+  // than carried over from the desktop's live totals: the run state is
+  // trimmed as a run grows, and a report has to be reproducible from what was
+  // actually stored.
+  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+  const frontendSummary = summarizeFrontendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
+
+  const boundaryStarted = Boolean(run.boundaryStartedAt);
+  // Accessibility violations are generated one row per (rule, route) at the
+  // source, so the same rule reads as several near-identical findings
+  // whenever it fails on more than one route. Grouped back to one finding per
+  // rule here, with real element selectors joined in from frontendSummary's
+  // already-correct rollup. Every other category keeps its current per-row
+  // granularity — those dedupe keys are already route/status-specific in ways
+  // that are mostly genuinely distinct issues.
+  const accessibilityFindings = run.findings.filter((finding) => finding.category === 'ACCESSIBILITY_VIOLATION');
+  const otherFindings = run.findings.filter((finding) => finding.category !== 'ACCESSIBILITY_VIOLATION');
+  const groupedAccessibilityFindings = groupAccessibilityFindings(
+    accessibilityFindings,
+    frontendSummary?.accessibility.rules ?? [],
+    hasDeclaredFlow,
+    boundaryStarted,
+  );
+
   const deterministic = [
     ...missingStates.map((state: any) => ({
       id: `missing-state:${state.key}`, priority: state.role === 'TERMINAL' ? 'HIGH' : 'MEDIUM', generator: 'RULES',
+      category: 'DECLARED_COVERAGE_GAP', dedupeKey: null,
       title: `Exercise the missing ${state.name || state.key} state`,
       impact: 'The declared Flow was not fully verified in this run.', confidence: 1,
       rationale: `No accepted Flow event referenced ${state.key}.`,
@@ -469,23 +612,15 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
     })),
     ...missingTransitions.map((transition: any) => ({
       id: `missing-transition:${transition.from}:${transition.to}`, priority: 'MEDIUM', generator: 'RULES',
+      category: 'DECLARED_COVERAGE_GAP', dedupeKey: null,
       title: `Verify ${transition.from} → ${transition.to}`, impact: 'A declared transition has no accepted evidence.', confidence: 1,
       rationale: 'No accepted FLOW_TRANSITION event matched the immutable Flow version.',
       suggestedAction: `Exercise the ${transition.action} action and emit a correlated transition event.`,
       expectedOutcome: 'The transition is reproducible and supported by interaction/request evidence.',
       affectedState: transition.to, affectedTransition: `${transition.from}>${transition.to}`, evidenceIds: [], effort: 'LOW', reproductionPath: [transition.from, transition.action, transition.to],
     })),
-    ...run.findings.map((finding) => ({
-      id: finding.id, priority: finding.severity, generator: finding.generatorSource,
-      title: finding.title, impact: finding.description, confidence: finding.confidence,
-      rationale: finding.description, suggestedAction: finding.recommendation || 'Investigate the linked evidence and repeat the affected step.',
-      expectedOutcome: 'The affected interaction completes reliably without the captured failure.',
-      affectedState: finding.relatedStateName, affectedTransition: null,
-      evidenceIds: finding.evidenceEvents.map((link) => link.evidenceEventId), effort: 'MEDIUM', reproductionPath: finding.reproductionSteps,
-      // A finding with no recorded scope must not silently pass as in-Flow:
-      // resolve it from the run's boundary instead.
-      scope: hasDeclaredFlow ? resolveFindingScope(finding.scope, Boolean(run.boundaryStartedAt)) : 'SESSION',
-    })),
+    ...otherFindings.map((finding) => mapSingleFinding(finding, hasDeclaredFlow, boundaryStarted)),
+    ...groupedAccessibilityFindings,
   ].sort((left, right) => (severityRank[left.priority] ?? 99) - (severityRank[right.priority] ?? 99));
   // Declared-but-unobserved states and transitions are absence findings: they
   // belong to the Flow itself and carry no scope of their own.
@@ -495,11 +630,6 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
   const entitlement = new EntitlementChecker(prisma);
   const aiEnabled = process.env.QA_REPORT_AI_ENABLED === 'true'
     && await entitlement.canAccess(run.organizationId, Feature.REPORT_GENERATION);
-  // Re-derived from the persisted evidence rather than carried over from the desktop's live
-  // totals: the run state is trimmed as a run grows, and a report has to be reproducible from
-  // what was actually stored. Pure and cheap, and the baseline lookup below needs the endpoints.
-  const backendSummary = summarizeBackendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
-  const frontendSummary = summarizeFrontendEvidence(run.evidenceEvents, { captureTracks: run.captureTracks });
 
   // The slow, mutually independent steps of the cold path. They used to be awaited one after
   // another; each owns its own failure handling, so starting them together changes when they run,

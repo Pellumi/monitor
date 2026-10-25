@@ -30,7 +30,10 @@ export type QualityReportDocumentInput = {
 
 export type QualityReportFormat = "JSON" | "PDF" | "CSV" | "HTML";
 
-const EVENT_LIMIT = 250;
+// Was 250: a page of near-identical rows adds bulk without insight. The full
+// sequence stays queryable in-app regardless of how many rows print here —
+// the counts table above the row list already carries the exact totals.
+const EVENT_LIMIT = 50;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -147,7 +150,21 @@ function readReport(report: Record<string, unknown>) {
     latestViewport: asRecord(viewportHistory.at(-1)),
     eventCounts: asRecord(runSummary.eventCounts),
     recommendations: records(inFlow.recommendedNextActions),
-    findings: records(inFlow.findings),
+    // Deterministic findings arrive sorted by priority, but AI-sourced
+    // suggestions are appended after that sorted block, unsorted relative to
+    // it — so the list as stored is not reliably priority-ordered end to end.
+    // Sorting once here keeps the Findings Index, the per-finding chapter and
+    // the "Immediate attention" cover callout consistent with each other and
+    // with the "Ordered by priority" claim already printed in this document.
+    findings: records(inFlow.findings).sort(
+      (left, right) =>
+        (SEVERITY_RANK[text(left.priority, "MEDIUM").toUpperCase()] ?? 99) -
+        (SEVERITY_RANK[text(right.priority, "MEDIUM").toUpperCase()] ?? 99),
+    ),
+    // QRS-RUN-003 companion: the run's own stop reason, translated into a
+    // verification verdict on the cover page rather than printed as a raw enum.
+    completionReason: typeof runSummary.boundaryOutcome === "string" ? runSummary.boundaryOutcome : null,
+    completedStatus: text(report.status, ""),
     missingStates: records(inFlow.missingStates),
     missingTransitions: records(inFlow.missingTransitions),
     unexpectedStates: asArray(inFlow.unexpectedStates).map((item) => String(item)),
@@ -266,6 +283,7 @@ function renderFinding(item: Record<string, unknown>, index: number): string {
       priority,
     )}</span><h2>${escapeHtml(text(item.title ?? item.suggestedAction, "Recommended improvement"))}</h2></div>
     <h3>Why it matters</h3><p>${escapeHtml(impact)}</p>
+    ${contextualCaveat(item) ? `<p class="muted">${escapeHtml(contextualCaveat(item))}</p>` : ""}
     ${rationale && rationale !== impact ? `<h3>What the evidence shows</h3><p>${escapeHtml(rationale)}</p>` : ""}
     <h3>Next step</h3><p>${escapeHtml(text(item.suggestedAction, "Investigate and repeat the affected step."))}</p>
     ${renderResolution(item)}
@@ -277,6 +295,9 @@ function renderFinding(item: Record<string, unknown>, index: number): string {
       ["AFFECTED STATE", text(item.affectedState, "Not linked to one state")],
       ["AFFECTED TRANSITION", text(item.affectedTransition, "Not linked to one transition")],
       ["SCOPE", text(item.scope, "IN_FLOW")],
+      ...(asArray(item.affectedRoutes).length
+        ? ([["AFFECTED ROUTES", joined(item.affectedRoutes)]] as Array<[string, string]>)
+        : []),
     ])}</table>
     ${
       reproduction.length
@@ -377,6 +398,11 @@ function baselineText(value: unknown): string {
   return `${comparison} (${usual} over ${samples.toLocaleString()} calls)`;
 }
 
+// Below this many samples, "p50/p75/p95" claims more statistical confidence
+// than the underlying values support — at n=1 all three percentiles are the
+// same single observation wearing three different labels.
+const LOW_SAMPLE_THRESHOLD = 5;
+
 /** A percentile triple as the report prints it, or a dash when unmeasured. */
 function percentileText(value: unknown, unit = "ms"): string {
   const row = asRecord(value);
@@ -388,6 +414,11 @@ function percentileText(value: unknown, unit = "ms"): string {
     if (unit === "") return number.toFixed(2);
     return number >= 1_000 ? `${(number / 1_000).toFixed(1)} s` : `${Math.round(number)} ms`;
   };
+  const samples = Number(row.samples ?? 0);
+  if (Number.isFinite(samples) && samples > 0 && samples < LOW_SAMPLE_THRESHOLD) {
+    const values = [...new Set([format(row.p50), format(row.p75), format(row.p95)])];
+    return `${values.join(" / ")} observed over ${samples} sample${samples === 1 ? "" : "s"} — too few to call these percentiles`;
+  }
   return `${format(row.p50)} p50 · ${format(row.p75)} p75 · ${format(row.p95)} p95`;
 }
 
@@ -557,7 +588,7 @@ function renderFrontend(data: ReadReport): string {
     }
     ${
       a11yRows
-        ? `<h3>Accessibility rules</h3><p>Counted once per rule per scan, not once per failing element: one contrast failure across four hundred elements is one thing to fix.</p><table class="index"><tr><td>IMPACT</td><td>RULE</td><td>OCCURRENCES</td></tr>${a11yRows}</table>`
+        ? `<h3>Accessibility rules</h3><p>Counted once per rule per scan, not once per failing element: one contrast failure across four hundred elements is one thing to fix. IMPACT below is the scanning tool's own rating (critical/serious/moderate/minor), a different scale from Tellann's finding priority — see "Two different severity scales" earlier in this document.</p><table class="index"><tr><td>IMPACT</td><td>RULE</td><td>OCCURRENCES</td></tr>${a11yRows}</table>`
         : ""
     }
     ${
@@ -775,6 +806,49 @@ const OUTCOME_KIND_TEXT: Record<string, string> = {
   INFRASTRUCTURE: "A failure of the run itself, not a finding about the application. Nothing here shows the Flow is broken.",
   USER: "The run was stopped before it finished; states it did not reach say nothing about the application.",
 };
+
+/** The run's own stop reason, translated into prose for the cover-page verdict. */
+const COMPLETION_REASON_TEXT: Record<string, string> = {
+  TERMINAL_STATE_REACHED: "The run reached its declared terminal state. This report reflects a complete pass through the declared Flow.",
+  MANUAL_STOP_BEFORE_TERMINAL: "The run was stopped manually before reaching its declared terminal state. Findings and coverage reflect only what happened before the stop.",
+  MANUAL_STOP_BEFORE_INITIAL: "The run was stopped before it reached its declared initial state. Little to nothing in this report was captured in-Flow.",
+  TIMEOUT: "The run timed out before reaching its declared terminal state. Findings and coverage reflect only what happened before the timeout.",
+  SESSION_MANUAL_STOP: "This observational session was stopped manually. There is no declared Flow to measure completeness against — only what was captured is reported.",
+  SESSION_TIMEOUT: "This observational session timed out. There is no declared Flow to measure completeness against — only what was captured is reported.",
+};
+const COMPLETION_REASON_FALLBACK = "This run's completion reason was not recorded, so completeness cannot be confirmed from this report alone.";
+
+/** The cover-page headline paired with COMPLETION_REASON_TEXT, same keys. */
+const VERDICT_HEADLINE_TEXT: Record<string, string> = {
+  TERMINAL_STATE_REACHED: "Verified — reached its declared end",
+  MANUAL_STOP_BEFORE_TERMINAL: "Partial — stopped before the declared end",
+  MANUAL_STOP_BEFORE_INITIAL: "Incomplete — stopped before the Flow began",
+  TIMEOUT: "Partial — timed out before the declared end",
+  SESSION_MANUAL_STOP: "Session — no declared Flow to verify against",
+  SESSION_TIMEOUT: "Session — no declared Flow to verify against",
+};
+
+/** Finding categories where "this happened" needs a "confirm it's actually a defect" caveat. */
+const CONTEXTUAL_CATEGORIES = new Set(["HTTP_ERROR_RESPONSE", "NETWORK_REQUEST_FAILED", "BROWSER_CONSOLE_ERROR"]);
+
+/** Tellann's own priority scale, lowest number first — mirrors services/background-workers' severityRank. */
+const SEVERITY_RANK: Record<string, number> = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+
+/**
+ * A caveat for findings whose category is inherently ambiguous without more context
+ * than this run captured (a 401 can be a correct auth rejection; a console error can be
+ * third-party noise). Absent for every other category, and silently absent on a report
+ * generated before `category` was added to the payload — `text(item.category, "")`
+ * returns "" for those, which never matches `CONTEXTUAL_CATEGORIES`.
+ */
+function contextualCaveat(item: Record<string, unknown>): string {
+  const category = text(item.category, "");
+  if (!CONTEXTUAL_CATEGORIES.has(category)) return "";
+  if (category === "BROWSER_CONSOLE_ERROR") {
+    return "This is a console error observed during the run. Some console errors are expected noise from third-party scripts; confirm it traces to application code before treating it as a defect.";
+  }
+  return "This is an HTTP response outside the 2xx/3xx range. A 401/403 during an intentional auth check, or a 404 your application expects to probe for, reads identically to a real failure here — confirm what the request was for before treating this as a defect.";
+}
 
 /**
  * The Automated Run chapter (QRS-RUN-005..008): what the run was pinned to, how each state went,
@@ -1038,7 +1112,7 @@ function renderAppendix(data: ReadReport): string {
       : []),
   ];
   return `<section class="major"><div class="section-label">Appendix // Evidence</div><h2>Auditable capture record</h2>
-    <p>The capture this report was derived from. Values read from the page stay masked here: a protected value is revealed only in the app, one at a time, rate limited and audited, and is never written to a downloaded file.</p>
+    <p>The capture this report was derived from. Values read from the page stay masked here: a protected value is revealed only in the app, one at a time, rate limited and audited, and is never written to a downloaded file. For the full captured sequence, open this run in Tellann Desktop and use the evidence viewer; this document prints only a bounded sample for audit reference.</p>
     <table class="facts">${factRows([
       ["EVIDENCE EVENTS CAPTURED", String(data.eventTotal || data.events.length)],
       ["ACCEPTED FLOW EVENTS", String(data.acceptedFlowEvents.length)],
@@ -1146,6 +1220,11 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     <div class="brand"><div class="logo">TELLANN</div><span class="badge">Quality // QA run report</span></div>
     <h1>${escapeHtml(title)}</h1>
     <p class="muted">${data.hasFlow ? "Everything this QA run established: what the Flow declared, what the run observed, every finding with its evidence, the risks found outside the Flow, and the capture record behind them." : "Everything this observational session established: what the run captured, every evidence-backed finding, annotations, artifacts, and the auditable capture record behind them."}</p>
+    ${
+      data.completionReason
+        ? `<div class="notice"><strong>${escapeHtml(VERDICT_HEADLINE_TEXT[data.completionReason] ?? "Outcome not recorded")}.</strong> ${escapeHtml(COMPLETION_REASON_TEXT[data.completionReason] ?? COMPLETION_REASON_FALLBACK)}</div>`
+        : ""
+    }
     <div class="summary"><div class="metric">${data.findings.length} finding${
       data.findings.length === 1 ? "" : "s"
     }${data.hasFlow ? " in this Flow" : " in this session"}</div><p>${escapeHtml(
@@ -1153,15 +1232,52 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     )}</p></div>
     <div class="metrics">
       ${data.hasFlow ? `<div><span>Expected coverage</span><strong>${escapeHtml(expectedCoverage)}</strong></div>` : ""}
-      <div><span>Observed states</span><strong>${escapeHtml(text(data.summary.observedStateCount, "0"))}</strong></div>
-      <div><span>Transitions</span><strong>${escapeHtml(text(data.summary.observedTransitionCount, "0"))}</strong></div>
+      ${
+        data.hasFlow
+          ? `<div><span>Observed states</span><strong>${escapeHtml(text(data.summary.observedStateCount, "0"))}</strong></div>
+             <div><span>Transitions</span><strong>${escapeHtml(text(data.summary.observedTransitionCount, "0"))}</strong></div>`
+          : `<div><span>Observed states</span><strong>Not measured</strong></div>
+             <div><span>Transitions</span><strong>Not measured</strong></div>`
+      }
       <div><span>High priority</span><strong>${escapeHtml(text(data.summary.criticalOrHighFindings, "0"))}</strong></div>
     </div>
+    <table class="facts">${factRows([
+      ["WORKFLOW COVERAGE", data.hasFlow ? coverageText(data) : "Not measured — this run declared no Flow to verify against"],
+      [
+        "STATE/TRANSITION EVIDENCE",
+        data.hasFlow
+          ? `${text(data.summary.observedStateCount, "0")} states, ${text(data.summary.observedTransitionCount, "0")} transitions observed`
+          : "Not available for a session-scoped run",
+      ],
+      [
+        // instrumentationAvailable is about the frontend framework adapter
+        // (the "Instrumentation manifest" below), not a backend concept — it
+        // has no meaning on a run that never opened a browser.
+        "INSTRUMENTATION",
+        data.backendOnly
+          ? "Not applicable — no browser capture track"
+          : data.runSummary.instrumentationAvailable
+            ? "Validated instrumentation attached"
+            : "Browser-level evidence only",
+      ],
+    ])}</table>
     ${
       data.runSummary.captureDegraded
         ? '<div class="notice"><strong>Capture was degraded.</strong> Read the limitations in the evidence appendix before relying on the coverage figure in this report.</div>'
         : ""
     }
+    ${(() => {
+      const top = data.findings.filter((f) => ["CRITICAL", "HIGH"].includes(text(f.priority, "").toUpperCase())).slice(0, 3);
+      if (!top.length) return "";
+      return `<div class="notice"><strong>Immediate attention</strong><ul>${top
+        .map(
+          (f) =>
+            `<li><span class="sev ${escapeHtml(text(f.priority, "MEDIUM").toLowerCase())}">${escapeHtml(
+              text(f.priority, "MEDIUM"),
+            )}</span> ${escapeHtml(text(f.title ?? f.suggestedAction, "Finding"))}</li>`,
+        )
+        .join("")}</ul></div>`;
+    })()}
     <table class="facts">${snapshotRows}</table>
 
     ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Flow</div><h2>What the Flow declared</h2>
@@ -1189,6 +1305,8 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
           : ""
       }
     </section>` : ""}
+
+    ${data.hasFlow ? renderGaps(data) : ""}
 
     <section class="major"><div class="section-label">Section // Run</div><h2>How the run was captured</h2>
       <table class="facts">${factRows([
@@ -1273,11 +1391,11 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
         ["LOW / INFO", "For awareness. It may be intentional, or it limits what this run could see."],
       ])}</table>
       <p class="muted">Confidence reflects how a finding was established: a deterministic rule over accepted evidence scores highest; an AI-assisted suggestion is published only when its references to states, transitions, and evidence ids were verified against this run.</p>
+      <h3>Two different severity scales</h3>
+      <p>Tellann priority (CRITICAL/HIGH/MEDIUM/LOW/INFO, used throughout this document) ranks findings by how much they affect this run's declared Flow or session. Where a finding comes from automated tooling — the accessibility scanner's own impact rating (critical/serious/moderate/minor) — that is a different scale, scoped to the single rule it flags. A tool rating of "critical" does not by itself raise Tellann's priority for the finding derived from it; "0 critical findings" and "2 critical accessibility rules" appearing in the same report is not a contradiction.</p>
     </section>
 
     ${data.findings.map((finding, index) => renderFinding(finding, index)).join("")}
-
-    ${data.hasFlow ? renderGaps(data) : ""}
 
     ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
       ${

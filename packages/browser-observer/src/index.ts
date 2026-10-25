@@ -2054,7 +2054,7 @@ export class BrowserObserver {
       if (level === 'ERROR') {
         const finding: BrowserFinding = {
           id: uuid(), runId, category: 'BROWSER_CONSOLE_ERROR', severity: 'MEDIUM', confidence: 0.95,
-          title: 'Browser console error', description: text, url: originUrl,
+          title: 'Browser console error', description: text, url: originUrl ? sanitizeCapturedUrl(originUrl) : null,
           viewport: origin && !origin.isClosed() ? origin.viewportSize() : null,
           evidenceArtifactIds: [], evidenceChecksums: [],
           reproductionSteps: ['Open the captured route', 'Repeat the linked interaction'],
@@ -2153,7 +2153,7 @@ export class BrowserObserver {
         const finding: BrowserFinding = {
           id: uuid(), runId, category: failed ? 'NETWORK_REQUEST_FAILED' : 'HTTP_ERROR_RESPONSE', severity,
           confidence: 0.98, title: failed ? 'Network request failed' : `Request returned ${status}`,
-          description, url: originPage?.url() || null, viewport: originPage?.viewportSize() ?? null,
+          description, url: originPage ? sanitizeCapturedUrl(originPage.url()) : null, viewport: originPage?.viewportSize() ?? null,
           evidenceArtifactIds: [], evidenceChecksums: [],
           reproductionSteps: ['Open the captured route', 'Repeat the linked interaction'],
           recommendation: 'Check service availability, request construction, authorization, and server handling.',
