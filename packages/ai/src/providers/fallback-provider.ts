@@ -19,6 +19,16 @@ export class AllProvidersFailedError extends Error {
 
 export function describeProviderError(error: unknown): string {
   const message = error instanceof Error ? error.message : String((error as { code?: unknown })?.code ?? error);
+  // Zod's Error.message is a pretty-printed JSON array. A compact logger shows
+  // only its opening bracket, which hides the field the provider got wrong.
+  const issues = (error as { issues?: Array<{ path?: PropertyKey[]; message?: string }> })?.issues;
+  if (Array.isArray(issues) && issues.length) {
+    return issues
+      .slice(0, 3)
+      .map((issue) => `${issue.path?.map(String).join('.') || 'response'}: ${issue.message || 'invalid value'}`)
+      .join('; ')
+      .slice(0, 240);
+  }
   return message.startsWith('CIRCUIT_OPEN:') ? 'circuit open after repeated failures' : message.slice(0, 240);
 }
 

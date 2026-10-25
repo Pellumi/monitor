@@ -524,7 +524,10 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
         const generated = await provider.generateStructured({
           schema: AiImprovementSchema,
           timeoutMs: 20_000,
-          prompt: `Produce evidence-backed QA improvements as strict JSON. Do not invent routes, states, transitions, or evidence IDs. Input:\n${JSON.stringify(safeInput)}`,
+          prompt: `Produce evidence-backed QA improvements as strict JSON. Do not invent routes, states, transitions, or evidence IDs.
+Return exactly this shape:
+{"suggestions":[{"priority":"CRITICAL|HIGH|MEDIUM|LOW","impact":"string","confidence":0.0,"rationale":"string","suggestedAction":"string","expectedOutcome":"string","affectedState":null,"affectedTransition":null,"evidenceIds":["existing evidence id"]}]}
+Use null for an affected state or transition when none is supported. Input:\n${JSON.stringify(safeInput)}`,
         });
         // Nothing the model returns is trusted as a reference. Evidence ids,
         // state keys and transitions are checked against what this run actually

@@ -695,6 +695,36 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
     // a slow page names the state that was slow.
     settleTimes.set(next.to, ports.now() - settleStartedAt);
     recognition = recognizeAmong(snapshot, contract.states);
+    let recognizedFromTransition = false;
+    // Authentication commonly redirects to a role-specific landing route that has drifted from
+    // the Flow declaration. If the credential submit visibly left the login route, stayed on the
+    // application origin, and no declared state matches the new page, the transition's declared
+    // destination is bounded evidence for that one landing. This does not help arbitrary actions
+    // or override a competing state match.
+    if (!recognition.best && !recognition.ambiguous
+      && /(credential|log.?in|sign.?in)/i.test(next.action ?? '')
+      && before.path !== snapshot.path
+      && originOf(before.url) === originOf(snapshot.url)) {
+      const expected = contract.states.find((state) => state.key === next.to);
+      if (expected) {
+        recognition = {
+          best: {
+            stateKey: expected.key,
+            score: 0.3,
+            confidence: 'MEDIUM',
+            evidence: {
+              sdk: 'ABSENT', route: expected.routePatterns.length > 0 ? 'MISMATCH' : 'NOT_APPLICABLE', heading: 'NOT_APPLICABLE',
+              requiredPresent: 0, requiredTotal: expected.requiredElements.length,
+              optionalPresent: 0, optionalTotal: expected.optionalElements.length,
+              apiMatched: 0, apiTotal: expected.expectedApi.length,
+            },
+          },
+          candidates: [],
+          ambiguous: false,
+        };
+        recognizedFromTransition = true;
+      }
+    }
     const landed = recognition.best;
     const advanced = landed !== null && !recognition.ambiguous && landed.stateKey === next.to;
     // What the person said the step causes, checked against what the page actually did. Never gates the run: the
@@ -711,6 +741,7 @@ export async function runAutomation(ports: AutomationPorts, config: AutomationCo
       // How long a person would have waited for this, and whether the page said anything while they did.
       settledMs: settleTimes.get(next.to) ?? null,
       busyIndicator: snapshot.page?.busyIndicator ?? null,
+      ...(recognizedFromTransition ? { resolvedBy: 'TRANSITION_DESTINATION', declaredRoutes: contract.states.find((state) => state.key === next.to)?.routePatterns ?? [], observedPath: snapshot.path } : {}),
       ...(checked.length ? { effects: checked } : {}),
     });
     await capture({

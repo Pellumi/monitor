@@ -65,6 +65,31 @@ test('an in-Flow credential transition fills a live password field omitted by th
   ]);
 });
 
+test('a successful credential redirect can reach its declared destination when only its route is stale', async () => {
+  const contract: ExecutableContract = {
+    flowVersionId: 'v', flowHash: 'h', analysisIdentity: null, initialStateKey: 'login',
+    states: [state({ key: 'login', role: 'INITIAL', routePatterns: ['/login'] }), state({ key: 'dashboard', role: 'TERMINAL', routePatterns: ['/admin'] })],
+    transitions: [transition({
+      id: 'submit-credentials', from: 'login', to: 'dashboard', action: 'SUBMIT_CREDENTIALS',
+      control: control({ labels: ['Login'] }), inputs: [],
+    })],
+  };
+  const app = new FakeApp({
+    start: 'login',
+    pages: {
+      login: { path: '/login', sdkState: 'login', elements: [element({ ref: 'login', role: 'button', name: 'Login' })] },
+      dashboard: { path: '/dashboard', sdkState: undefined, elements: [] },
+    },
+    clicks: { login: 'dashboard' },
+  });
+
+  const result = await runAutomation(app, config({ contract, targetStateKey: 'dashboard' }));
+  assert.equal(result.stopReason, 'TERMINAL_STATE_REACHED');
+  const verified = app.events.find((event) => event.type === 'QA_AUTOMATION_ACTION_VERIFIED');
+  assert.equal(verified?.data.resolvedBy, 'TRANSITION_DESTINATION');
+  assert.equal(verified?.data.observedPath, '/dashboard');
+});
+
 test('the event stream tells the story of the run in order', async () => {
   const app = lmsApp();
   await runAutomation(app, config());
