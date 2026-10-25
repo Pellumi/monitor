@@ -169,6 +169,21 @@ export class GraphBuilder {
         existing.path = entity.path;
         existing.startLine = entity.startLine;
         existing.endLine = entity.endLine;
+      } else if (existing.path !== null && entity.path !== null && existing.path !== entity.path) {
+        // Two different files produced the same entity id — most commonly a
+        // `ui_route` whose canonical path string collided (an admin router
+        // and the public router both declaring "/login", a stale duplicate
+        // route table, an index route inheriting a parent's path). Silently
+        // keeping whichever file was analyzed first would let a correct
+        // match on one page resolve, with full confidence, to an unrelated
+        // file. Record every path seen instead, so a consumer that cannot
+        // safely pick one (annotation-source.ts does exactly this) can see
+        // the id is ambiguous rather than trusting the survivor of a race.
+        const alternates = new Set<string>(
+          Array.isArray(existing.metadata.alternatePaths) ? existing.metadata.alternatePaths as string[] : [],
+        );
+        alternates.add(entity.path);
+        existing.metadata.alternatePaths = [...alternates];
       }
       for (const item of entity.evidence) {
         if (existing.evidence.length >= 8) break;

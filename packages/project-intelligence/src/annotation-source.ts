@@ -53,16 +53,44 @@ function splitIdentifier(word: string): string[] {
  * and attribute text that a rendered element could never report, and charging
  * it for that breadth — as a symmetric ratio does — rejected otherwise exact
  * matches purely for being described in more words than the browser saw.
+ *
+ * Each matched term is weighted by `termWeight`, how distinctive that word is
+ * across every candidate action in this analysis — not a flat count of
+ * matched terms. A word only a handful of actions in the whole codebase use
+ * is real evidence; a word most of them share (an "OK", a "Submit", a
+ * "Close") is not, and must not by itself clear the match threshold. See
+ * `actionTermWeigher` for why this exists: without it, one generic shared
+ * word was enough to resolve an annotation on one page to an unrelated
+ * action on a completely different page.
  */
-function coverage(target: Set<string>, source: Set<string>): number {
+function coverage(target: Set<string>, source: Set<string>, termWeight: (term: string) => number): number {
   if (!target.size || !source.size) return 0;
-  let matches = 0;
-  for (const term of target) if (source.has(term)) matches += 1;
-  if (!matches) return 0;
-  // One shared term is thin evidence however short the target is, so a
-  // single-term agreement can never reach certainty on its own.
-  const corroboration = matches >= 3 ? 1 : matches === 2 ? 0.9 : 0.75;
-  return (matches / target.size) * corroboration;
+  let weighted = 0;
+  for (const term of target) if (source.has(term)) weighted += termWeight(term);
+  if (!weighted) return 0;
+  return Math.min(1, weighted / target.size);
+}
+
+/**
+ * Builds the per-term weight function `coverage` uses, from how many
+ * *distinct* candidate actions each term appears in across this analysis.
+ * A term confined to a small slice of the candidates (at most 5%, floor 2)
+ * keeps full weight; past that its weight decays with how common it is, so a
+ * handful of unrelated actions all labelled "Submit" can't each borrow the
+ * others' confidence.
+ */
+function actionTermWeigher(entityTerms: Set<string>[]): (term: string) => number {
+  const documentCount = new Map<string, number>();
+  for (const terms of entityTerms) {
+    for (const term of terms) documentCount.set(term, (documentCount.get(term) ?? 0) + 1);
+  }
+  const total = entityTerms.length;
+  const commonThreshold = Math.max(2, Math.ceil(total * 0.05));
+  return (term: string) => {
+    const count = documentCount.get(term) ?? 1;
+    if (total <= 1 || count <= commonThreshold) return 1;
+    return Math.max(0, commonThreshold / count);
+  };
 }
 
 /**
@@ -161,18 +189,25 @@ export function resolveAnnotationSource(
     fingerprint.accessibleName, fingerprint.id, fingerprint.testId,
   ].filter(Boolean).join(' '));
 
-  const actionMatches = analysis.entities
-    .filter((entity) => entity.type === 'ui_action')
+  const actionEntities = analysis.entities.filter((entity) => entity.type === 'ui_action');
+  const actionSourceText = (entity: CodeEntity) => {
+    const metadata = entity.metadata as Record<string, unknown>;
+    // Analyses recorded before labels existed still carry the label inside
+    // the display name, ahead of the ` (onClick)` suffix.
+    const labels = Array.isArray(metadata.labels) && metadata.labels.length
+      ? metadata.labels.join(' ')
+      : entity.name.replace(/\s*\([^)]*\)\s*$/, '');
+    const identifiers = `${metadata.testId ?? ''} ${metadata.domId ?? ''}`;
+    const evidenceText = entity.evidence.map((item) => `${item.symbol ?? ''} ${item.excerpt ?? ''}`).join(' ');
+    return `${labels} ${identifiers} ${evidenceText}`;
+  };
+  const actionSourceTerms = new Map(actionEntities.map((entity) => [entity.id, terms(actionSourceText(entity))]));
+  const termWeight = actionTermWeigher([...actionSourceTerms.values()]);
+
+  const actionMatches = actionEntities
     .map((entity) => {
       const metadata = entity.metadata as Record<string, unknown>;
-      // Analyses recorded before labels existed still carry the label inside
-      // the display name, ahead of the ` (onClick)` suffix.
-      const labels = Array.isArray(metadata.labels) && metadata.labels.length
-        ? metadata.labels.join(' ')
-        : entity.name.replace(/\s*\([^)]*\)\s*$/, '');
-      const identifiers = `${metadata.testId ?? ''} ${metadata.domId ?? ''}`;
-      const evidenceText = entity.evidence.map((item) => `${item.symbol ?? ''} ${item.excerpt ?? ''}`).join(' ');
-      const nameScore = coverage(targetTerms, terms(`${labels} ${identifiers} ${evidenceText}`));
+      const nameScore = coverage(targetTerms, actionSourceTerms.get(entity.id)!, termWeight);
       const tagScore = String(metadata.element ?? '').toLowerCase() === fingerprint.tag.toLowerCase() ? 0.15 : 0;
       return { entity, score: Math.min(1, nameScore * 0.85 + tagScore) };
     })
@@ -193,6 +228,16 @@ export function resolveAnnotationSource(
     .filter((entity) => entity.type === 'ui_route')
     .find((entity) => normalizedRoute(String((entity.metadata as Record<string, unknown>).route ?? entity.name)) === route);
   if (!routeEntity) return null;
+  // Two different files can declare routes that canonicalize to the same
+  // path (an admin router and the public router both claiming "/login", a
+  // stale duplicate route table, an index route inheriting a parent's path).
+  // The graph builder then merges them into one entity id and records every
+  // path it saw as `alternatePaths`. Picking whichever file happened to win
+  // that merge would be exactly the kind of guess this function exists to
+  // refuse — so an ambiguous route falls through to no match rather than a
+  // plausible-looking but potentially wrong file.
+  const alternatePaths = (routeEntity.metadata as Record<string, unknown>).alternatePaths;
+  if (Array.isArray(alternatePaths) && alternatePaths.length > 0) return null;
   const location = locationOf(routeEntity, analysis);
   return location ? {
     status: 'MATCHED', ...location,

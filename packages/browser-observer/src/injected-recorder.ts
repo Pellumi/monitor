@@ -613,20 +613,38 @@ export function installQaRecorder(config: {
     .pin.resolved{opacity:.55}.pin.orphaned{border-style:dashed}
     .badge{position:fixed;top:14px;right:14px;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;background:var(--surface-1);border:1px solid var(--border);color:var(--text);font:600 11px/1 var(--font-ui);z-index:2147483647;box-shadow:0 8px 20px rgb(0 0 0/calc(.3*var(--shadow-k)))}
     .badge-dot{width:7px;height:7px;border-radius:50%;background:var(--pin);animation:badge-pulse 1.4s ease-in-out infinite}@keyframes badge-pulse{0%,100%{opacity:1}50%{opacity:.35}}
-    .pill,.pill *{box-sizing:border-box}.pill{position:fixed;z-index:2147483647;min-width:260px;max-width:min(380px,calc(100vw - 32px));padding:6px;border:1px solid var(--border);border-radius:999px;background:var(--surface-1);color:var(--text);font:13px/1.4 var(--font-ui);box-shadow:0 20px 48px rgb(0 0 0/calc(.4*var(--shadow-k)));animation:dialog-in .14s var(--ease)}@keyframes dialog-in{from{opacity:0;transform:scale(.98)}}
-    .pill.expanded{border-radius:var(--radius-lg)}.pill-bar{display:flex;align-items:center;gap:2px}
-    .pill-input{flex:1;min-width:0;height:28px;padding:0 10px;border:0;background:transparent;color:var(--text-strong);font:13px/1.4 var(--font-ui);outline:none}.pill-input::placeholder{color:var(--text-subtle)}
-    .pill button{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;flex:0 0 auto;border:0;border-radius:50%;background:transparent;color:var(--text-muted);font:600 13px var(--font-ui);cursor:default}
-    .pill button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.08)}.pill button:disabled{opacity:.5;cursor:wait}
-    .pill-save{background:var(--pin);color:var(--pin-on)}
-    .pill-mention-box{padding:4px 8px 0}.pill-mention-box[hidden]{display:none}
-    .pill-mention-input{width:100%;height:26px;padding:0 8px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-0);color:var(--text-strong);font:12px var(--font-ui);outline:none}.pill-mention-input:focus{border-color:var(--accent)}
-    .pill-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 8px}.pill-chips:empty{display:none}.pill-chips .chip{padding:2px 8px;border-radius:var(--radius);background:rgb(var(--overlay-rgb)/.07);color:var(--text-muted);font:11px var(--font-ui)}
-    .pill-results{display:flex;flex-direction:column;gap:2px;margin:4px 8px 0;padding:4px;border:1px solid var(--border);border-radius:var(--radius);background:var(--surface-0)}.pill-results:empty{display:none}
-    .pill-results button{width:auto;height:26px;border-radius:var(--radius);justify-content:flex-start;padding:0 8px;color:var(--text)}.pill-results button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.07)}
-    .pill-meta{padding:4px 10px 0;color:var(--text-subtle);font:11px/1.4 var(--font-ui)}.pill-meta:empty{display:none}
-    .pill-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:6px;padding:6px 8px 0;border-top:1px solid var(--border-subtle)}.pill-actions[hidden]{display:none}
-    .pill-actions button{width:auto;height:26px;padding:0 10px;border-radius:var(--radius);font:500 11px var(--font-ui)}.pill-actions button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.08)}.pill-actions .pill-delete{color:#f87171}
+    .pill,.pill *{box-sizing:border-box}
+    .pill{position:fixed;z-index:2147483647;min-width:272px;max-width:min(380px,calc(100vw - 32px));padding:7px;border:1px solid var(--border);border-radius:999px;background:color-mix(in srgb,var(--surface-1) 95%,transparent);backdrop-filter:blur(18px) saturate(1.5);-webkit-backdrop-filter:blur(18px) saturate(1.5);color:var(--text);font:13px/1.4 var(--font-ui);box-shadow:0 0 0 1px rgb(0 0 0/calc(.03*var(--shadow-k))),0 2px 6px rgb(0 0 0/calc(.1*var(--shadow-k))),0 16px 40px rgb(0 0 0/calc(.32*var(--shadow-k)));transition:border-radius .22s var(--ease),box-shadow .22s var(--ease),left .14s var(--ease),top .14s var(--ease);animation:dialog-in .22s cubic-bezier(.16,1,.3,1)}
+    @keyframes dialog-in{from{opacity:0;transform:translateY(-6px) scale(.96)}}
+    .pill.expanded{border-radius:var(--radius-lg)}
+    .pill-bar{display:flex;align-items:center;gap:4px}
+    .pill-input{flex:1;min-width:0;height:var(--control-height);padding:0 12px;border:0;border-radius: 9999px 0 0 9999px;background:transparent;color:var(--text-strong);font:13px/1.4 var(--font-ui);outline:none}
+    .pill-input::placeholder{color:var(--text-subtle)}
+    .pill button{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;flex:0 0 auto;border:0;border-radius:50%;background:transparent;color:var(--text-muted);font:600 13px var(--font-ui);cursor:default;transition:background-color .14s var(--ease),color .14s var(--ease),transform .1s var(--ease)}
+    .pill button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.08)}
+    .pill button:active:not(:disabled){transform:scale(.88)}
+    .pill button:disabled{opacity:.5;cursor:wait}
+    .pill-save{background:var(--pin);color:var(--pin-on);box-shadow:0 1px 2px rgb(0 0 0/calc(.18*var(--shadow-k)))}
+    .pill-save:hover:not(:disabled){background:var(--pin);filter:brightness(1.1)}
+    .pill-mention-box{padding:4px 9px 0}
+    .pill-mention-box[hidden]{display:none}
+    .pill-mention-input{width:100%;height:28px;padding:0 10px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-0);color:var(--text-strong);font:12px var(--font-ui);outline:none;transition:border-color .14s var(--ease),box-shadow .14s var(--ease)}
+    .pill-mention-input:focus{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 22%,transparent)}
+    .pill-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 9px}
+    .pill-chips:empty{display:none}
+    .pill-chips .chip{padding:3px 9px;border-radius:999px;background:rgb(var(--overlay-rgb)/.07);color:var(--text-muted);font:11px var(--font-ui);animation:pop-in .15s var(--ease)}
+    @keyframes pop-in{from{opacity:0;transform:scale(.85)}}
+    .pill-results{display:flex;flex-direction:column;gap:2px;margin:4px 9px 0;padding:4px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface-0);box-shadow:0 10px 24px rgb(0 0 0/calc(.2*var(--shadow-k)))}
+    .pill-results:empty{display:none}
+    .pill-results button{width:auto;height:28px;border-radius:var(--radius);justify-content:flex-start;padding:0 10px;color:var(--text);transition:background-color .1s var(--ease)}
+    .pill-results button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.07)}
+    .pill-meta{padding:4px 11px 0;color:var(--text-subtle);font:11px/1.4 var(--font-ui)}
+    .pill-meta:empty{display:none}
+    .pill-actions{display:flex;align-items:center;justify-content:flex-end;gap:6px;margin-top:6px;padding:7px 9px 0;border-top:1px solid var(--border-subtle)}
+    .pill-actions[hidden]{display:none}
+    .pill-actions button{width:auto;height:28px;padding:0 11px;border-radius:var(--radius-lg);font:500 11px var(--font-ui);transition:background-color .14s var(--ease)}
+    .pill-actions button:hover:not(:disabled){background:rgb(var(--overlay-rgb)/.08)}
+    .pill-actions .pill-delete{color:#f87171}
     .live{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0)}
     :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
     .sidebar-toggle{position:fixed;bottom:18px;right:18px;z-index:2147483647;display:flex;align-items:center;justify-content:center;min-width:34px;height:34px;padding:0 8px;border:2px solid var(--on-accent);border-radius:17px;background:var(--pin);color:var(--pin-on);font:700 12px var(--font-ui);box-shadow:0 8px 20px rgb(0 0 0/calc(.3*var(--shadow-k)))}
@@ -641,7 +659,7 @@ export function installQaRecorder(config: {
     .sidebar-row.resolved{opacity:.6}
     .sidebar-row-comment{color:var(--text-strong);font-weight:600;overflow-wrap:anywhere}
     .sidebar-row-meta{color:var(--text-subtle);font-size:11px}
-    @media(prefers-reduced-motion:reduce){.pill{animation:none}.pill button,.badge-dot{animation:none;transition:none}}
+    @media(prefers-reduced-motion:reduce){.pill{animation:none;transition:none}.pill button,.badge-dot,.pill-chips .chip,.pill-mention-input,.pill-results button,.pill-actions button{animation:none;transition:none}}
   </style><div class="shield" hidden></div><div class="outline" hidden></div><div class="tooltip" hidden><div class="tag"></div><div class="meta"></div></div><div class="pins"></div><div class="pill" hidden role="dialog" aria-modal="true" aria-label="Annotate selected element"><div class="pill-bar"><input class="pill-input" type="text" maxlength="2000" placeholder="Add a comment…" aria-label="Annotation comment"><button class="pill-mention-btn" type="button" aria-label="Mention a teammate" title="Mention a teammate">@</button><button class="pill-save" type="button" aria-label="Save annotation">✓</button></div><div class="pill-mention-box" hidden><input class="pill-mention-input" type="text" placeholder="Search teammates…" aria-label="Search organization members"></div><div class="pill-chips"></div><div class="pill-results" role="listbox" aria-label="Member search results"></div><div class="pill-meta"></div><div class="pill-actions" hidden><button class="pill-resolve" type="button">Resolve</button><button class="pill-delete" type="button">Delete</button><button class="pill-cancel" type="button">Cancel</button></div></div><div class="badge" hidden><span class="badge-dot"></span>Annotating</div><button class="sidebar-toggle" type="button" aria-label="Review annotations on this page" hidden><span class="sidebar-toggle-count">0</span></button><aside class="sidebar" hidden aria-label="Annotations on this page"><div class="sidebar-header"><span>Annotations on this page</span><button class="sidebar-close" type="button" aria-label="Close annotations panel">✕</button></div><div class="sidebar-list"></div></aside><div class="live" aria-live="polite"></div>`;
   const shield = shadow.querySelector('.shield') as HTMLElement;
   const outline = shadow.querySelector('.outline') as HTMLElement;

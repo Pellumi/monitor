@@ -156,3 +156,52 @@ test('rejects an element whose words the code does not account for', () => {
     null,
   );
 });
+
+test('a route declared by two different files (an id collision merged by the graph builder) is not guessed', () => {
+  // GraphBuilder.addEntity records every colliding path as `alternatePaths`
+  // rather than silently keeping whichever file it saw first; this is the
+  // shape that produces in the analysis once two files' routes collide.
+  const fixture = analysis([{
+    id: 'route', type: 'ui_route', name: '/login', path: 'src/pages/login.tsx', startLine: 1, endLine: null,
+    language: null, confidence: 0.98,
+    metadata: { route: '/login', alternatePaths: ['src/pages/admin/account-settings.admin.tsx'] }, evidence: [],
+  }]);
+  const result = resolveAnnotationSource(fixture, {
+    normalizedRoute: '/login',
+    elementFingerprint: { ...annotation().elementFingerprint, accessibleName: 'Unrecognized control' },
+  });
+  assert.equal(result, null, 'an ambiguous route id must not resolve to whichever file happened to win the merge');
+});
+
+test('a single word shared with most of the codebase\'s actions cannot alone clear the match threshold', () => {
+  // Twenty unrelated actions across the codebase are all labelled "Submit" —
+  // exactly the generic-word situation that used to let an annotation on one
+  // page resolve to an action on a completely unrelated one.
+  const crowd = Array.from({ length: 20 }, (_, index) => uiAction({
+    id: `submit-${index}`, path: `src/forms/Form${index}.tsx`, metadata: { element: 'button', labels: ['Submit'] },
+  }));
+  const fixture = analysis([...crowd, component()]);
+  for (const entity of crowd) fixture.relationships.push(owning(entity.id));
+  const result = resolveAnnotationSource(fixture, annotation({ accessibleName: 'Submit' }));
+  assert.equal(result, null, 'a word nearly every action shares is not distinguishing evidence for any one of them');
+});
+
+test('a word confined to a small handful of actions still resolves the right one', () => {
+  // The same crowd of generically-labelled actions, plus one action whose
+  // label is actually distinctive, owned by its own component — the
+  // annotation should find that one specifically, not just any match.
+  const crowd = Array.from({ length: 20 }, (_, index) => uiAction({
+    id: `submit-${index}`, path: `src/forms/Form${index}.tsx`, metadata: { element: 'button', labels: ['Submit'] },
+  }));
+  const distinctive = uiAction({ id: 'checkout', path: 'src/Checkout.tsx', metadata: { element: 'button', labels: ['Checkout now'] } });
+  const checkoutPage = component({ id: 'checkout-page', name: 'CheckoutPage', path: 'src/Checkout.tsx' });
+  const fixture = analysis([...crowd, distinctive, checkoutPage]);
+  for (const entity of crowd) fixture.relationships.push(owning(entity.id));
+  fixture.relationships.push({
+    id: 'owns-checkout', source: 'checkout', target: 'checkout-page', type: 'ROUTES_TO', confidence: 0.95, evidence: [],
+  });
+  const result = resolveAnnotationSource(fixture, annotation({ accessibleName: 'Checkout now' }));
+  assert.equal(result?.strategy, 'ELEMENT');
+  assert.equal(result?.path, 'src/Checkout.tsx');
+  assert.equal(result?.symbol, 'CheckoutPage');
+});

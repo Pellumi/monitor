@@ -53,7 +53,7 @@ import {
 import { Link } from 'react-router-dom';
 import { confirmAction, showMenu } from '../components/desktop-ui';
 import { useDesktop } from '../desktop-context';
-import { flowInitializationHref, nonProductionEnvironmentId } from '../flow-initialization';
+import { flowInitializationHref, flowRunReadiness, nonProductionEnvironmentId } from '../flow-initialization';
 import {
   estimateStateWidth,
   flowEdgeTypes,
@@ -259,13 +259,19 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
   // Publishing a Flow does not bind it to the attached project — Instrumentation
   // does that, and it needs the Flow's context in the URL to offer the analysis
   // step at all. Offer the jump from here while the Flow is in front of the user.
+  // Republishing a revision leaves the old project binding in place (still
+  // "ACTIVE", just pointed at the previous version), so readiness has to be
+  // checked by version, not by binding status alone — otherwise the Flow goes
+  // stale with no way back to Instrumentation from here.
   const { applications } = useDesktop();
   const application = applications.find((item) => item.id === projectId);
-  const projectBinding = (flow as { projectBindings?: Array<{ status?: string }> } | null)
-    ?.projectBindings?.[0];
-  const initializeHref = editable || projectBinding?.status === 'ACTIVE'
+  const environmentId = nonProductionEnvironmentId(application);
+  const environmentName = application?.environments.find((item) => item.id === environmentId)?.name;
+  const runReadiness = flow ? flowRunReadiness(flow, environmentId) : null;
+  const needsReinitialization = runReadiness?.code === 'STALE_VERSION';
+  const initializeHref = editable || !runReadiness || runReadiness.ready
     ? null
-    : flowInitializationHref(projectId, flow, nonProductionEnvironmentId(application));
+    : flowInitializationHref(projectId, flow, environmentId);
   const readiness = useMemo<PublishReadiness>(
     () => evaluatePublishReadiness({
       states: flow?.states ?? [],
@@ -720,10 +726,12 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                 <Link
                   className="button primary"
                   to={initializeHref}
-                  title="Map this Flow onto the attached project so QA runs can start"
+                  title={needsReinitialization
+                    ? 'A new version was published — re-map it onto the attached project so QA runs reflect it'
+                    : 'Map this Flow onto the attached project so QA runs can start'}
                 >
                   <Workflow size={14} />
-                  Initialize in project
+                  {needsReinitialization ? 'Re-initialize in project' : 'Initialize in project'}
                 </Link>
               ) : null}
               <button className="button" type="button" disabled={pending} onClick={() => void editor.revise()}>
@@ -743,6 +751,33 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
             <button className="flow-icon-button" type="button" aria-label="Dismiss" onClick={editor.clearError}>
               <X size={14} />
             </button>
+          </div>
+        ) : null}
+        {!editable && runReadiness && !runReadiness.ready ? (
+          <div className="infobar" data-tone="warning" role="status">
+            <TriangleAlert size={16} />
+            <span>
+              {needsReinitialization ? (
+                <>
+                  <strong>New version published.</strong> This Flow was previously initialized
+                  {environmentName ? ` for ${environmentName}` : ''}, but that mapping is still pointed at
+                  the version before this revision. Re-initialize it so QA runs use the updated states and
+                  transitions.
+                </>
+              ) : (
+                <>
+                  <strong>Not ready for QA.</strong> {runReadiness.message}
+                </>
+              )}
+            </span>
+            {initializeHref ? (
+              <div className="flow-actions">
+                <Link className="button" to={initializeHref}>
+                  <Workflow size={14} />
+                  {needsReinitialization ? 'Re-initialize in project' : 'Initialize in project'}
+                </Link>
+              </div>
+            ) : null}
           </div>
         ) : null}
         {proposed ? (
