@@ -389,6 +389,17 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
   /** Typed text: an input, a textarea or a contenteditable. Choices and toggles have their own actions. */
   private async fill(handle: ElementHandle<Element>, value: string): Promise<void> {
     await (handle as ElementHandle<HTMLInputElement>).fill(value, { timeout: this.options.actionTimeoutMs });
+    // Playwright completing means the typing command ran, not necessarily that a controlled
+    // component kept the value. Verify only equality inside the page and return a boolean, so a
+    // password is never read back into logs, evidence, or an error message.
+    if (value.length > 0) {
+      const retained = await handle.evaluate((el, expected) => {
+        if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) return el.value === expected;
+        if ((el as HTMLElement).isContentEditable) return (el.textContent ?? '') === expected;
+        return false;
+      }, value);
+      if (!retained) throw new Error('the field did not retain the supplied value');
+    }
   }
 
   /**

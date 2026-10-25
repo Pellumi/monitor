@@ -121,12 +121,20 @@ export function resolveRunData(
   const protectedKeys = new Set<string>();
   const missing = new Set<string>();
 
+  // An empty literal cannot satisfy a form input. Treat it as absent so a protected
+  // credential can fall back to the selected persona, and ordinary inputs fail preflight
+  // instead of producing a successful no-op fill followed by a rejected submit.
+  const materializedValue = (key: string): MaterializedValue | undefined => {
+    const value = materialized.get(key);
+    return value && (value.file || value.value.length > 0) ? value : undefined;
+  };
+
   for (const transition of contract.transitions) {
     if ((transition.mode ?? 'AUTO') === 'MANUAL') continue;
     for (const input of transition.inputs) {
       const role = input.role ?? 'PROVIDED';
       if (role === 'PROTECTED') protectedKeys.add(input.dataKey);
-      if (materialized.has(input.dataKey) || generated.has(input.dataKey) || bridged.has(input.dataKey)) continue;
+      if (materializedValue(input.dataKey) || generated.has(input.dataKey) || bridged.has(input.dataKey)) continue;
       if (role === 'GENERATED') {
         generated.set(input.dataKey, { value: generatedValue(input, unique()), secret: false });
       } else if (role === 'PROTECTED') {
@@ -139,7 +147,7 @@ export function resolveRunData(
     }
   }
 
-  const port: ResolvedRunData['port'] = (key) => materialized.get(key) ?? generated.get(key) ?? bridged.get(key);
+  const port: ResolvedRunData['port'] = (key) => materializedValue(key) ?? generated.get(key) ?? bridged.get(key);
   const protectedValues = [...protectedKeys].flatMap((key) => {
     const value = port(key)?.value;
     return value ? [value] : [];
