@@ -123,6 +123,21 @@ test('logs in with the persona\'s credentials and reaches a route behind login',
   assert.deepEqual(app.actions.filter((a) => a.kind === 'FILL').map((a) => (a as { value: string }).value), ['teacher@test.dev', 'hunter2']);
 });
 
+test('fills a live password field when static analysis omitted it from the confirmed login form', async () => {
+  const { graph, site } = buildGraph();
+  const login = graph.edges.find((candidate) => candidate.id === 'login')!;
+  login.login = [{ name: 'email', label: null, dataKey: 'email' }];
+
+  const app = site();
+  const result = await seekInitialState(app, graph, '/courses/7', 'STAGING', { persona: teacher });
+
+  assert.ok(result.ok, !result.ok ? result.detail : undefined);
+  assert.deepEqual(
+    app.actions.filter((action) => action.kind === 'FILL').map((action) => [action.ref, (action as { value: string }).value]),
+    [['email-field', 'teacher@test.dev'], ['password-field', 'hunter2']],
+  );
+});
+
 test('wrong credentials are reported as a failed authentication, not a missing route', async () => {
   const { graph, site } = buildGraph();
   const app = site();

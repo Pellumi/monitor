@@ -195,7 +195,8 @@ export async function seekInitialState(
   const passwordPath = loginPage.path;
 
   // Only what this page still asks for. A staged sign-in already took the identifier, and its field is gone.
-  const remaining = (loginEdge.login ?? []).filter((field) => !supplied.has(field.dataKey));
+  const remaining = loginInputsForPage(loginEdge.login ?? [], loginPage)
+    .filter((field) => !supplied.has(field.dataKey));
   const resolvedLogin = resolveStep(loginPage, { control: loginEdge.control, inputs: remaining, data: loginData, label: 'log in' });
   if (!resolvedLogin.ok) {
     // Missing form, field or credential is a setup problem, not a wrong-password failure.
@@ -240,6 +241,34 @@ export async function seekInitialState(
  * is better placed to make it than a run following a heuristic.
  */
 export const MAX_IDENTIFIER_HOPS = 2;
+
+/**
+ * Static analysis can recognise a form as a login form from a nested password input while still
+ * failing to recover that input's declaration (component wrappers and spread props are common
+ * examples). The live page is authoritative about the controls that are actually present. Once
+ * we are on the confirmed login route and have positively identified a visible password input,
+ * include it in the login step so the browser is not asked to submit a blank password.
+ *
+ * This is deliberately password-only: it cannot make the runner type arbitrary persona data into
+ * an undeclared field, and the value still has to exist as the selected persona's `password`
+ * credential. `resolveStep` performs the normal field matching and fails safely when it does not.
+ */
+function loginInputsForPage(declared: FormInput[], snapshot: SemanticSnapshot): FormInput[] {
+  const inputs = [...declared];
+  const declaresPassword = inputs.some(isPasswordInput);
+  if (declaresPassword) return inputs;
+
+  const password = snapshot.elements.find((element) =>
+    element.visible && element.enabled && element.inputType === 'password');
+  if (!password) return inputs;
+
+  inputs.push({
+    name: password.fieldName ?? password.name ?? password.label ?? 'password',
+    label: password.label ?? password.name ?? null,
+    dataKey: 'password',
+  });
+  return inputs;
+}
 
 /** Whether two reads are of the same page, as far as moving a sign-in on is concerned. */
 function samePage(a: SemanticSnapshot, b: SemanticSnapshot): boolean {
