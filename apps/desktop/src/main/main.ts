@@ -2702,6 +2702,31 @@ function isTransientRendererLoadFailure(error: unknown): boolean {
   return error.message.includes('ERR_FAILED') || error.message.includes('ERR_ABORTED');
 }
 
+/**
+ * Resolves a set of artifact ids (annotation or automated-finding screenshots)
+ * to base64 data URIs, for embedding into a saved HTML/PDF report. Presigned
+ * download URLs expire in minutes and can't be written into the saved file, so
+ * this fetches the bytes once, here, before rendering. One missing or expired
+ * artifact never blocks the whole report.
+ */
+async function resolveArtifactScreenshots(runId: string, artifactIds: string[]): Promise<Record<string, string>> {
+  if (!artifactIds.length) return {};
+  const entries = await Promise.all(artifactIds.map(async (artifactId): Promise<[string, string] | null> => {
+    try {
+      const { url } = await cloud.getArtifactDownloadUrl(runId, artifactId);
+      if (!url) return null;
+      const response = await net.fetch(url);
+      if (!response.ok) return null;
+      const buffer = Buffer.from(await response.arrayBuffer());
+      const contentType = response.headers.get('content-type') || 'image/png';
+      return [artifactId, `data:${contentType};base64,${buffer.toString('base64')}`];
+    } catch {
+      return null;
+    }
+  }));
+  return Object.fromEntries(entries.filter((entry): entry is [string, string] => entry !== null));
+}
+
 function registerIpc(): void {
   ipcMain.handle(IPC.getVersion, (event) => {
     assertTrustedSender(event);
@@ -2942,39 +2967,30 @@ function registerIpc(): void {
     }
 
     // Presigned artifact URLs expire in minutes and can't be written into the
-    // saved file, so screenshots are resolved to bytes and base64-embedded
-    // here, before rendering — only for the formats that can show an image.
-    let annotationScreenshots: Record<string, string> | undefined;
+    // saved file, so screenshots (annotation or automated-finding) are resolved
+    // to bytes and base64-embedded here, before rendering — only for the
+    // formats that can show an image.
+    let screenshots: Record<string, string> | undefined;
     if (format === 'HTML' || format === 'PDF') {
       const sections = (report.sections as Record<string, unknown> | undefined) ?? {};
       const userAnnotations = Array.isArray(sections.userAnnotations)
         ? sections.userAnnotations as Record<string, unknown>[]
         : [];
-      const artifactIds = [...new Set(userAnnotations
-        .map((item) => item.screenshotArtifactId)
-        .filter((id): id is string => typeof id === 'string'))];
-      if (artifactIds.length) {
-        const entries = await Promise.all(artifactIds.map(async (artifactId): Promise<[string, string] | null> => {
-          try {
-            const { url } = await cloud.getArtifactDownloadUrl(value.runId as string, artifactId);
-            if (!url) return null;
-            const response = await net.fetch(url);
-            if (!response.ok) return null;
-            const buffer = Buffer.from(await response.arrayBuffer());
-            const contentType = response.headers.get('content-type') || 'image/png';
-            const dataUri: string = `data:${contentType};base64,${buffer.toString('base64')}`;
-            return [artifactId, dataUri];
-          } catch {
-            // One missing or expired artifact never blocks the whole report.
-            return null;
-          }
-        }));
-        annotationScreenshots = Object.fromEntries(
-          entries.filter((entry): entry is [string, string] => entry !== null),
-        );
-      }
+      const inFlow = (sections.inFlowFindings as Record<string, unknown> | undefined) ?? {};
+      const findings = Array.isArray(inFlow.findings) ? inFlow.findings as Record<string, unknown>[] : [];
+      const criticalFindings = Array.isArray(sections.criticalSystemWideFindings)
+        ? sections.criticalSystemWideFindings as Record<string, unknown>[]
+        : [];
+      const findingArtifactIds = (item: Record<string, unknown>) =>
+        Array.isArray(item.evidenceArtifactIds) ? item.evidenceArtifactIds as unknown[] : [];
+      const artifactIds = [...new Set([
+        ...userAnnotations.map((item) => item.screenshotArtifactId),
+        ...findings.flatMap(findingArtifactIds),
+        ...criticalFindings.flatMap(findingArtifactIds),
+      ].filter((id): id is string => typeof id === 'string'))];
+      screenshots = await resolveArtifactScreenshots(value.runId as string, artifactIds);
     }
-    const documentInput = { report, generatedAt: new Date().toISOString(), annotationScreenshots };
+    const documentInput = { report, generatedAt: new Date().toISOString(), screenshots };
     const { buffer, extension, filterName } = await renderQualityReport(documentInput, format);
     const filename = `${qualityReportFileBase(documentInput)}.${extension}`;
     const save = await dialog.showSaveDialog(mainWindow!, {

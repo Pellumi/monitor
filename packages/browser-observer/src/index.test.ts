@@ -29,6 +29,7 @@ import {
   liveEvidenceForBackendRequest,
   classifyBackendLatency,
   liveEvidenceForBackendLatency,
+  isChromiumFailedResourceConsoleMessage,
   BrowserObserver,
 } from './index';
 import zlib from 'node:zlib';
@@ -225,6 +226,18 @@ test('live urls keep the real route and values but withhold credentials', () => 
   );
   // Whatever the live panel shows, what is uploaded is still placeholder-only.
   assert.equal(sanitizeCapturedUrl('https://app.test/student/42/results?page=2'), 'https://app.test/student/DETAIL/DETAIL?page=');
+});
+
+test('a Chromium failed-resource console message is recognised regardless of the specific status or failure', () => {
+  assert.equal(isChromiumFailedResourceConsoleMessage('Failed to load resource: the server responded with a status of 401 (Unauthorized)'), true);
+  assert.equal(isChromiumFailedResourceConsoleMessage('Failed to load resource: the server responded with a status of 500 ()'), true);
+  assert.equal(isChromiumFailedResourceConsoleMessage('Failed to load resource: net::ERR_CONNECTION_REFUSED'), true);
+});
+
+test('an ordinary application console error is not mistaken for a failed-resource message', () => {
+  assert.equal(isChromiumFailedResourceConsoleMessage("Cannot read properties of undefined (reading 'map')"), false);
+  assert.equal(isChromiumFailedResourceConsoleMessage('TypeError: x is not a function'), false);
+  assert.equal(isChromiumFailedResourceConsoleMessage(''), false);
 });
 
 test('successful network requests are represented in the live panel', () => {

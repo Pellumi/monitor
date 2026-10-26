@@ -507,6 +507,20 @@ const MAX_STATE_ARTIFACTS = 60;
 const MAX_FINDING_ARTIFACTS = 20;
 /** Retained traces per run: each one is a per-state diagnostic, and a run that fails everywhere should not upload hundreds. */
 const MAX_TRACE_ARTIFACTS = 8;
+/**
+ * Chromium's own console message for a failed resource load — emitted
+ * independently of application code whenever a request the page issued comes
+ * back as an error status or network failure. The network pipeline already
+ * raises HTTP_ERROR_RESPONSE / NETWORK_REQUEST_FAILED for the exact same
+ * failure with method, route and status, so this exists only to skip
+ * constructing a second, less useful top-level finding for it. The QA_CONSOLE
+ * evidence event for the message is still recorded unconditionally above.
+ */
+const CHROMIUM_FAILED_RESOURCE_CONSOLE_PATTERN = /^Failed to load resource:/;
+/** Exported for direct testing — see CHROMIUM_FAILED_RESOURCE_CONSOLE_PATTERN above. */
+export function isChromiumFailedResourceConsoleMessage(text: string): boolean {
+  return CHROMIUM_FAILED_RESOURCE_CONSOLE_PATTERN.test(text);
+}
 /** Coalescing window for state pushes to the renderer. */
 const STATE_PUSH_INTERVAL_MS = 250;
 const LIVE_EVIDENCE_KINDS: LiveEvidenceKind[] = [
@@ -2051,7 +2065,7 @@ export class BrowserObserver {
           },
         }, { pageUrl: originUrl ? sanitizeCapturedUrl(originUrl) : undefined });
       }
-      if (level === 'ERROR') {
+      if (level === 'ERROR' && !isChromiumFailedResourceConsoleMessage(text)) {
         const finding: BrowserFinding = {
           id: uuid(), runId, category: 'BROWSER_CONSOLE_ERROR', severity: 'MEDIUM', confidence: 0.95,
           title: 'Browser console error', description: text, url: originUrl ? sanitizeCapturedUrl(originUrl) : null,

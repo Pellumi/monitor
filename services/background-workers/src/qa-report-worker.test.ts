@@ -256,15 +256,16 @@ test('a malformed or legacy dedupeKey never throws, just fails to parse', () => 
 
 function rawFinding(overrides: Partial<{
   id: string; severity: string; category: string | null; dedupeKey: string | null; title: string;
-  confidence: number; reproductionSteps: unknown; evidenceEventIds: string[]; scope: string | null;
+  confidence: number; reproductionSteps: unknown; evidenceEventIds: string[]; evidenceArtifactIds: string[]; scope: string | null;
 }> = {}) {
-  const { evidenceEventIds = [], ...rest } = overrides;
+  const { evidenceEventIds = [], evidenceArtifactIds = [], ...rest } = overrides;
   return {
     id: 'finding-1', severity: 'MEDIUM', generatorSource: 'BROWSER', category: 'ACCESSIBILITY_VIOLATION',
     dedupeKey: 'a11y:color-contrast:/settings', title: 'Elements must meet minimum color contrast ratio thresholds',
     description: '5 element(s) on /settings fail color-contrast.', confidence: 0.9,
     recommendation: 'Resolve the accessibility rule failure and rerun the affected Flow state.',
     relatedStateName: null, evidenceEvents: evidenceEventIds.map((evidenceEventId) => ({ evidenceEventId })),
+    evidence: evidenceArtifactIds.map((artifactId) => ({ artifactId })),
     reproductionSteps: ['Open the captured route', 'Inspect the reported elements'], scope: null,
     ...rest,
   };
@@ -308,4 +309,19 @@ test('a malformed dedupeKey on an accessibility row is never dropped — it fall
   const result = groupAccessibilityFindings(rows, [], false, false);
   assert.equal(result.length, 1);
   assert.equal(result[0].id, 'f1', 'the individual finding id survives, not a synthesized group id');
+});
+
+test('evidence artifact ids merge across rows grouped into one accessibility finding', () => {
+  const rows = [
+    rawFinding({ id: 'f1', dedupeKey: 'a11y:color-contrast:/settings', evidenceArtifactIds: ['shot-1'] }),
+    rawFinding({ id: 'f2', dedupeKey: 'a11y:color-contrast:/dashboard', evidenceArtifactIds: ['shot-2'] }),
+  ];
+  const [grouped] = groupAccessibilityFindings(rows, [], false, false);
+  assert.deepEqual(grouped.evidenceArtifactIds, ['shot-1', 'shot-2']);
+});
+
+test('evidence artifact ids pass through unmodified for a non-grouped finding', () => {
+  const rows = [rawFinding({ id: 'f1', category: 'HTTP_ERROR_RESPONSE', dedupeKey: 'request:POST:/login:401', evidenceArtifactIds: ['shot-3'] })];
+  const result = groupAccessibilityFindings(rows, [], false, false);
+  assert.deepEqual(result[0].evidenceArtifactIds, ['shot-3']);
 });

@@ -126,7 +126,7 @@ test('a resolved annotation with a matching screenshot embeds the image and says
     screenshotArtifactId: 'shot-1', resolved: true,
     resolvedAt: '2026-01-06T00:00:00.000Z', resolvedBy: { displayName: 'Reviewer' },
   }];
-  withScreenshot.annotationScreenshots = { 'shot-1': 'data:image/png;base64,AAAA' };
+  withScreenshot.screenshots = { 'shot-1': 'data:image/png;base64,AAAA' };
   const html = qualityReportHtml(withScreenshot);
   assert.ok(html.includes('<img class="annotation-shot" src="data:image/png;base64,AAAA"'));
   assert.ok(html.includes('resolved by Reviewer'));
@@ -871,4 +871,120 @@ test('declared coverage gaps are shown right after the Flow declaration, ahead o
   const runIndex = html.indexOf('How the run was captured');
   assert.ok(flowIndex < gapsIndex, 'Flow declaration comes first');
   assert.ok(gapsIndex < runIndex, 'coverage gaps come before run-capture details');
+});
+
+// ── Business-impact framing ─────────────────────────────────────────────────
+
+function findingInput(finding: Record<string, unknown>) {
+  return input({
+    sections: {
+      ...(input().report as any).sections,
+      inFlowFindings: {
+        recommendedNextActions: [],
+        findings: [{ id: 'f1', priority: 'MEDIUM', title: 'A finding', impact: 'Something happened.', confidence: 0.8, ...finding }],
+        missingStates: [], missingTransitions: [], unexpectedStates: [],
+      },
+    },
+  });
+}
+
+test('an accessibility finding gets a plain-language user-impact line', () => {
+  const html = qualityReportHtml(findingInput({ category: 'ACCESSIBILITY_VIOLATION' }));
+  assert.ok(html.includes('What this means for your users.'));
+  assert.ok(html.includes('assistive technology'));
+});
+
+test('an HTTP-error finding gets the HTTP-specific user-impact line, phrased as a guess not a fact', () => {
+  const html = qualityReportHtml(findingInput({ category: 'HTTP_ERROR_RESPONSE' }));
+  assert.ok(html.includes('if this route is part of a flow users rely on'));
+});
+
+test('a CLS vital finding gets the CLS-specific line, not the generic one', () => {
+  const html = qualityReportHtml(findingInput({ category: 'FRONTEND_POOR_WEB_VITAL', dedupeKey: 'vital:CLS:/login' }));
+  assert.ok(html.includes('Elements shifting while a page loads'));
+  assert.ok(!html.includes('A page slow to show its main content'), 'the LCP line must not also appear');
+});
+
+test('an LCP vital finding gets the LCP-specific line', () => {
+  const html = qualityReportHtml(findingInput({ category: 'FRONTEND_POOR_WEB_VITAL', dedupeKey: 'vital:LCP:/login' }));
+  assert.ok(html.includes('A page slow to show its main content'));
+});
+
+test('an unmapped category and a finding with no category at all print no user-impact line', () => {
+  const unmapped = qualityReportHtml(findingInput({ category: 'BACKEND_SLOW_RESPONSE' }));
+  assert.ok(!unmapped.includes('What this means for your users.'));
+
+  const noCategory = qualityReportHtml(findingInput({}));
+  assert.ok(!noCategory.includes('What this means for your users.'));
+});
+
+// ── Trend ────────────────────────────────────────────────────────────────────
+
+function trendInput(trend: Record<string, unknown>) {
+  return input({
+    sections: {
+      ...(input().report as any).sections,
+      trend,
+    },
+  });
+}
+
+test('no trend section data at all renders nothing — an older report predates the feature', () => {
+  const html = qualityReportHtml(input());
+  assert.ok(!html.includes('Since the last run'));
+});
+
+test('a report with no comparable prior run states so, and why, rather than omitting the chapter', () => {
+  const html = qualityReportHtml(trendInput({
+    status: 'NO_PRIOR_RUN', available: false,
+    basis: { comparedToRunId: null, comparedToRunAt: null, comparisonScope: 'SAME_FLOW', flowVersionChanged: null, sameEnvironment: null },
+    new: [], resolved: [], stillPresent: [], newCount: 0, resolvedCount: 0, stillPresentCount: 0,
+  }));
+  assert.ok(html.includes('Since the last run'));
+  assert.ok(html.includes('first comparable run'));
+  assert.ok(html.includes('Compared against the most recent completed run of the same Flow'));
+});
+
+test('a ready trend renders counts and the compared-to run, and lists new/resolved/persisting findings', () => {
+  const html = qualityReportHtml(trendInput({
+    status: 'READY', available: true,
+    basis: { comparedToRunId: 'prior-run', comparedToRunAt: '2026-01-01T00:00:00.000Z', comparisonScope: 'SAME_FLOW', flowVersionChanged: false, sameEnvironment: true },
+    new: [{ dedupeKey: 'vital:CLS:/login', category: 'FRONTEND_POOR_WEB_VITAL', severity: 'HIGH', title: '/login scored 1.63 CLS' }],
+    resolved: [{ dedupeKey: 'request:POST:/login:401', category: 'HTTP_ERROR_RESPONSE', severity: 'MEDIUM', title: 'Request returned 401' }],
+    stillPresent: [{ dedupeKey: 'a11y:color-contrast:/settings', category: 'ACCESSIBILITY_VIOLATION', severity: 'MEDIUM', title: 'Elements must meet minimum color contrast ratio thresholds' }],
+    newCount: 1, resolvedCount: 1, stillPresentCount: 1,
+  }));
+  assert.ok(html.includes('Since the last run'));
+  assert.ok(html.includes('/login scored 1.63 CLS'));
+  assert.ok(html.includes('Request returned 401'));
+  assert.ok(html.includes('Elements must meet minimum color contrast ratio thresholds'));
+});
+
+test('a trend compared against a different Flow version carries a caveat, not a silent "resolved"', () => {
+  const html = qualityReportHtml(trendInput({
+    status: 'READY', available: true,
+    basis: { comparedToRunId: 'prior-run', comparedToRunAt: '2026-01-01T00:00:00.000Z', comparisonScope: 'SAME_FLOW', flowVersionChanged: true, sameEnvironment: true },
+    new: [], resolved: [{ dedupeKey: 'a11y:button-name:/course', category: 'ACCESSIBILITY_VIOLATION', severity: 'HIGH', title: 'Buttons must have discernible text' }], stillPresent: [],
+    newCount: 0, resolvedCount: 1, stillPresentCount: 0,
+  }));
+  assert.ok(html.includes('declared Flow version differs from that run'));
+});
+
+// ── Finding screenshots ─────────────────────────────────────────────────────
+
+test('a finding whose evidenceArtifactIds matches a resolved screenshot embeds the image', () => {
+  const withShot = findingInput({ evidenceArtifactIds: ['finding-shot-1'] });
+  withShot.screenshots = { 'finding-shot-1': 'data:image/png;base64,BBBB' };
+  const html = qualityReportHtml(withShot);
+  assert.ok(html.includes('<img class="finding-shot" src="data:image/png;base64,BBBB"'));
+});
+
+test('a finding with evidenceArtifactIds but no matching screenshot renders no image and does not throw', () => {
+  const html = qualityReportHtml(findingInput({ evidenceArtifactIds: ['missing-shot'] }));
+  assert.ok(!html.includes('<img class="finding-shot"'));
+});
+
+test('a finding with no evidenceArtifactIds at all renders no image', () => {
+  const html = qualityReportHtml(findingInput({}));
+  assert.ok(!html.includes('<img class="finding-shot"'));
 });

@@ -32,6 +32,7 @@ import { NO_BASELINE, baselineKey, compareToBaseline, fetchEndpointBaselines } f
 import { NO_RESOLUTIONS, draftBackendFindingResolutions, type ResolutionOutcome } from './qa-finding-resolution';
 import { summarizeAutomationEvidence } from './qa-automation-report';
 import { runConcurrently } from './qa-cold-path';
+import { fetchPriorComparableRun, buildTrend, NO_TREND, type TrendBasis } from './qa-run-trend';
 
 const AiImprovementSchema = z.object({
   suggestions: z.array(z.object({
@@ -143,13 +144,14 @@ export type ReportFinding = {
   title: string; impact: string; confidence: number; rationale: string; suggestedAction: string;
   expectedOutcome: string; affectedState: string | null; affectedTransition: string | null;
   evidenceIds: string[]; effort: string; reproductionPath: unknown[]; scope?: string;
-  affectedRoutes?: string[];
+  affectedRoutes?: string[]; evidenceArtifactIds: string[];
 };
 
 type RawFinding = {
   id: string; severity: string; generatorSource: string; category: string | null; dedupeKey: string | null;
   title: string; description: string; confidence: number; recommendation: string | null;
   relatedStateName: string | null; evidenceEvents: { evidenceEventId: string }[];
+  evidence: { artifactId: string }[];
   reproductionSteps: unknown; scope: string | null;
 };
 
@@ -175,6 +177,7 @@ function mapSingleFinding(
     expectedOutcome: 'The affected interaction completes reliably without the captured failure.',
     affectedState: finding.relatedStateName, affectedTransition: null,
     evidenceIds: finding.evidenceEvents.map((link) => link.evidenceEventId), effort: 'MEDIUM',
+    evidenceArtifactIds: finding.evidence.map((e) => e.artifactId),
     reproductionPath: Array.isArray(finding.reproductionSteps) ? finding.reproductionSteps : [],
     // A finding with no recorded scope must not silently pass as in-Flow:
     // resolve it from the run's boundary instead.
@@ -241,6 +244,7 @@ export function groupAccessibilityFindings(
       expectedOutcome: 'The affected interaction completes reliably without the captured failure.',
       affectedState: first.relatedStateName, affectedTransition: null,
       evidenceIds: rows.flatMap((r) => r.evidenceEvents.map((e) => e.evidenceEventId)),
+      evidenceArtifactIds: rows.flatMap((r) => r.evidence.map((e) => e.artifactId)),
       effort: 'MEDIUM',
       reproductionPath: rule?.targets.length
         ? ['Open the captured route', ...rule.targets.map((t) => `Inspect ${t}`)]
@@ -528,7 +532,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
           patchSet: { include: { instrumentationPlan: true } },
           progressEvents: { orderBy: { occurredAt: 'asc' } },
           observedSessions: { orderBy: { startTime: 'asc' } },
-          findings: { include: { evidenceEvents: true }, orderBy: { createdAt: 'asc' } },
+          findings: { include: { evidenceEvents: true, evidence: true }, orderBy: { createdAt: 'asc' } },
           artifacts: { orderBy: { capturedAt: 'asc' } },
           annotations: {
             include: {
@@ -608,7 +612,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       rationale: `No accepted Flow event referenced ${state.key}.`,
       suggestedAction: `Repeat the Flow and emit the approved state event when ${state.name || state.key} is reached.`,
       expectedOutcome: 'The report can verify this state and its incoming/outgoing transitions.',
-      affectedState: state.key, affectedTransition: null, evidenceIds: [], effort: 'LOW', reproductionPath: [],
+      affectedState: state.key, affectedTransition: null, evidenceIds: [], evidenceArtifactIds: [], effort: 'LOW', reproductionPath: [],
     })),
     ...missingTransitions.map((transition: any) => ({
       id: `missing-transition:${transition.from}:${transition.to}`, priority: 'MEDIUM', generator: 'RULES',
@@ -617,7 +621,7 @@ async function generateReport(prisma: PrismaClient, reportId: string) {
       rationale: 'No accepted FLOW_TRANSITION event matched the immutable Flow version.',
       suggestedAction: `Exercise the ${transition.action} action and emit a correlated transition event.`,
       expectedOutcome: 'The transition is reproducible and supported by interaction/request evidence.',
-      affectedState: transition.to, affectedTransition: `${transition.from}>${transition.to}`, evidenceIds: [], effort: 'LOW', reproductionPath: [transition.from, transition.action, transition.to],
+      affectedState: transition.to, affectedTransition: `${transition.from}>${transition.to}`, evidenceIds: [], evidenceArtifactIds: [], effort: 'LOW', reproductionPath: [transition.from, transition.action, transition.to],
     })),
     ...otherFindings.map((finding) => mapSingleFinding(finding, hasDeclaredFlow, boundaryStarted)),
     ...groupedAccessibilityFindings,
@@ -736,11 +740,42 @@ Use null for an affected state or transition when none is supported. Input:\n${J
     ? prisma.reconciliationReport.findMany({ where: { qaRunId: run.id }, select: { trueGaps: true, trueGapTransitionsList: true } }).catch(() => [])
     : []);
 
-  const { ai, resolutions, baselines, automationReconciliation } = await runConcurrently({
+  const runTrend = async () => {
+    const emptyBasis: TrendBasis = {
+      comparedToRunId: null, comparedToRunAt: null,
+      comparisonScope: run.flowId ? 'SAME_FLOW' : 'SAME_APPLICATION_AND_ENVIRONMENT_NO_FLOW',
+      flowVersionChanged: null, sameEnvironment: null,
+    };
+    try {
+      const priorRun = await fetchPriorComparableRun(prisma, run);
+      if (!priorRun) return NO_TREND(emptyBasis);
+      const priorFindings = await prisma.browserFinding.findMany({
+        where: { runId: priorRun.id },
+        select: { dedupeKey: true, category: true, severity: true, title: true },
+      });
+      const basis: TrendBasis = {
+        comparedToRunId: priorRun.id,
+        comparedToRunAt: priorRun.createdAt.toISOString(),
+        comparisonScope: emptyBasis.comparisonScope,
+        flowVersionChanged: run.flowId ? run.expectedGraphVersionId !== priorRun.expectedGraphVersionId : null,
+        sameEnvironment: priorRun.environmentId === run.environmentId,
+      };
+      // Compared at raw BrowserFinding granularity (same as `run.findings`
+      // elsewhere in this function), not the display-grouped per-rule
+      // granularity the findings chapter uses — that's the granularity
+      // dedupeKey was designed for.
+      return buildTrend(run.findings, priorFindings, basis);
+    } catch (error) {
+      return { ...NO_TREND(emptyBasis), status: `UNAVAILABLE:${safeError(error)}` };
+    }
+  };
+
+  const { ai, resolutions, baselines, automationReconciliation, trend } = await runConcurrently({
     ai: runAi,
     resolutions: runResolutions,
     baselines: runBaselines,
     automationReconciliation: runAutomationReconciliation,
+    trend: runTrend,
   });
   const { aiSuggestions, aiStatus } = ai;
   const withResolution = <T extends { id: string }>(item: T) => {
@@ -896,6 +931,7 @@ Use null for an affected state or transition when none is supported. Input:\n${J
       frontendSummary,
       automated: automatedSummary,
       runSummary: { url: run.targetUrl, environment: run.environment, captureTracks: run.captureTracks, instrumentationAvailable: Boolean(run.patchSet), frameworkStateEvidenceCaptured: hasClientStateEvidence, repositoryRevision: run.repositorySnapshot?.revision ?? null, viewportHistory, durationMs: run.startedAt && run.endedAt ? run.endedAt.getTime() - run.startedAt.getTime() : null, boundaryOutcome: run.completionReason, eventCounts: counts, captureDegraded: run.findings.some((finding) => finding.category === 'CAPTURE_DEGRADED') },
+      trend,
       findingResolutions: {
         status: resolutions.status,
         provider: resolutions.provider,

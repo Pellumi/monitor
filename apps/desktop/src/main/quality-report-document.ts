@@ -20,12 +20,13 @@ export type QualityReportDocumentInput = {
   /** When this download was produced, which is not when the report was generated. */
   generatedAt: string;
   /**
-   * Annotation screenshots, pre-fetched and base64-encoded as `data:` URIs,
-   * keyed by `screenshotArtifactId`. Presigned download URLs expire in
-   * minutes and cannot be written into a saved file, so the caller resolves
-   * and embeds the bytes before handing the document off to be rendered.
+   * Artifact screenshots — annotation or automated-finding — pre-fetched and
+   * base64-encoded as `data:` URIs, keyed by artifact id. Presigned download
+   * URLs expire in minutes and cannot be written into a saved file, so the
+   * caller resolves and embeds the bytes before handing the document off to
+   * be rendered.
    */
-  annotationScreenshots?: Record<string, string>;
+  screenshots?: Record<string, string>;
 };
 
 export type QualityReportFormat = "JSON" | "PDF" | "CSV" | "HTML";
@@ -168,6 +169,12 @@ function readReport(report: Record<string, unknown>) {
     missingStates: records(inFlow.missingStates),
     missingTransitions: records(inFlow.missingTransitions),
     unexpectedStates: asArray(inFlow.unexpectedStates).map((item) => String(item)),
+    trend: asRecord(sections.trend),
+    hasTrend: Boolean(asRecord(sections.trend).available),
+    trendBasis: asRecord(asRecord(sections.trend).basis),
+    trendNew: records(asRecord(sections.trend).new),
+    trendResolved: records(asRecord(sections.trend).resolved),
+    trendStillPresent: records(asRecord(sections.trend).stillPresent),
     criticalFindings: records(sections.criticalSystemWideFindings),
     annotations: records(sections.userAnnotations),
     events: records(appendix.events),
@@ -271,10 +278,13 @@ function renderResolution(item: Record<string, unknown>): string {
 }
 
 /** One finding, with everything the app's summary leaves out. */
-function renderFinding(item: Record<string, unknown>, index: number): string {
+function renderFinding(item: Record<string, unknown>, index: number, screenshots: Record<string, string> = {}): string {
   const priority = text(item.priority, "MEDIUM");
   const reproduction = asArray(item.reproductionPath).map((step) => String(step)).filter(Boolean);
   const evidenceIds = asArray(item.evidenceIds).map((id) => String(id)).filter(Boolean);
+  const shots = asArray(item.evidenceArtifactIds)
+    .map((id) => screenshots[String(id)])
+    .filter((uri): uri is string => Boolean(uri));
   const rationale = text(item.rationale, "");
   const impact = text(item.impact ?? item.rationale, "Review the linked evidence.");
   return `<section class="finding">
@@ -283,6 +293,7 @@ function renderFinding(item: Record<string, unknown>, index: number): string {
       priority,
     )}</span><h2>${escapeHtml(text(item.title ?? item.suggestedAction, "Recommended improvement"))}</h2></div>
     <h3>Why it matters</h3><p>${escapeHtml(impact)}</p>
+    ${businessImpactLine(item) ? `<p class="muted"><strong>What this means for your users.</strong> ${escapeHtml(businessImpactLine(item))}</p>` : ""}
     ${contextualCaveat(item) ? `<p class="muted">${escapeHtml(contextualCaveat(item))}</p>` : ""}
     ${rationale && rationale !== impact ? `<h3>What the evidence shows</h3><p>${escapeHtml(rationale)}</p>` : ""}
     <h3>Next step</h3><p>${escapeHtml(text(item.suggestedAction, "Investigate and repeat the affected step."))}</p>
@@ -302,6 +313,13 @@ function renderFinding(item: Record<string, unknown>, index: number): string {
     ${
       reproduction.length
         ? `<h3>Reproduction path</h3><ol>${reproduction.map((step) => `<li>${escapeHtml(step)}</li>`).join("")}</ol>`
+        : ""
+    }
+    ${
+      shots.length
+        ? `<h3>Screenshot</h3>${shots
+            .map((uri) => `<img class="finding-shot" src="${escapeHtml(uri)}" alt="Masked screenshot captured for this finding">`)
+            .join("")}`
         : ""
     }
     ${
@@ -356,6 +374,56 @@ function renderGaps(data: ReadReport): string {
       ["OBSERVED STATES NOT DECLARED", String(unexpectedStates.length)],
     ])}</table>
     <table class="manifest">${stateRows}${transitionRows}${unexpectedRows}</table>
+  </section>`;
+}
+
+const TREND_SCOPE_TEXT: Record<string, string> = {
+  SAME_FLOW: "Compared against the most recent completed run of the same Flow.",
+  SAME_APPLICATION_AND_ENVIRONMENT_NO_FLOW: "Compared against the most recent completed session on the same application and environment (no Flow was declared on either run).",
+};
+
+/**
+ * Declared-vs-observed across runs: what's new, resolved, or still present since the
+ * last comparable run. Always states its own basis, even when unavailable — a
+ * comparison that could not run still says why and what it would have compared
+ * against, rather than silently omitting the chapter.
+ */
+function renderTrend(data: ReadReport): string {
+  // Absent entirely on a report generated before this feature shipped — say
+  // nothing, rather than claiming a comparison was attempted and failed.
+  if (!Object.keys(data.trend).length) return "";
+  const scopeLine = TREND_SCOPE_TEXT[text(data.trendBasis.comparisonScope, "")] ?? "No comparable prior run was identified.";
+  if (!data.hasTrend) {
+    const reason = text(data.trend.status, "") === "NO_PRIOR_RUN"
+      ? "This is the first comparable run, so nothing is new, resolved, or persisting yet."
+      : "A comparison could not be computed for this report.";
+    return `<section class="major"><div class="section-label">Section // Trend</div><h2>Since the last run</h2>
+      <p>${escapeHtml(scopeLine)} ${escapeHtml(reason)}</p></section>`;
+  }
+  const versionNote = data.trendBasis.flowVersionChanged === true
+    ? " The declared Flow version differs from that run — a finding that disappeared may reflect a changed declaration rather than a fix."
+    : "";
+  const envNote = data.trendBasis.sameEnvironment === false ? " That run was captured on a different environment." : "";
+  const row = (item: Record<string, unknown>, label: string) =>
+    `<tr><td>${escapeHtml(label)}</td><td><span class="sev ${escapeHtml(
+      text(item.severity, "MEDIUM").toLowerCase(),
+    )}">${escapeHtml(text(item.severity, "MEDIUM"))}</span></td><td><strong>${escapeHtml(
+      text(item.title, text(item.category, "Finding")),
+    )}</strong></td></tr>`;
+  return `<section class="major"><div class="section-label">Section // Trend</div><h2>Since the last run</h2>
+    <p>${escapeHtml(scopeLine)} Run captured ${escapeHtml(dateText(data.trendBasis.comparedToRunAt))}.${escapeHtml(versionNote)}${escapeHtml(envNote)}</p>
+    <div class="metrics">
+      <div><span>New</span><strong>${escapeHtml(text(data.trend.newCount, "0"))}</strong></div>
+      <div><span>Resolved</span><strong>${escapeHtml(text(data.trend.resolvedCount, "0"))}</strong></div>
+      <div><span>Still present</span><strong>${escapeHtml(text(data.trend.stillPresentCount, "0"))}</strong></div>
+    </div>
+    ${
+      data.trendNew.length || data.trendResolved.length || data.trendStillPresent.length
+        ? `<table class="index">${data.trendNew.map((item) => row(item, "NEW")).join("")}${data.trendResolved
+            .map((item) => row(item, "RESOLVED"))
+            .join("")}${data.trendStillPresent.map((item) => row(item, "STILL PRESENT")).join("")}</table>`
+        : ""
+    }
   </section>`;
 }
 
@@ -851,6 +919,50 @@ function contextualCaveat(item: Record<string, unknown>): string {
 }
 
 /**
+ * `dedupeKey` for a Core Web Vital finding is `vital:${metric}:${route}` (packages/
+ * browser-observer) — the only place the specific metric (LCP/CLS/INP) survives into
+ * the report, since `category` is the same FRONTEND_POOR_WEB_VITAL for all three.
+ */
+function parseVitalMetric(dedupeKey: unknown): string | null {
+  const key = typeof dedupeKey === "string" ? dedupeKey : "";
+  const parts = key.split(":");
+  return parts.length >= 2 && parts[0] === "vital" ? parts[1] : null;
+}
+
+/**
+ * Plain-language "what this means for your users" lines. Per docs/desktop/
+ * report_review.md §5, these never assert a specific business outcome (no invented
+ * percentages, no asserting a route is checkout) — only a generic translation of the
+ * technical event, with workflow-criticality framing kept as an explicit, unconfirmed
+ * guess ("if this route is part of a flow users rely on..."), never a stated fact.
+ * Scoped to the categories named for this feature; absent for every other category and
+ * for a report generated before `category` was added to the payload, same silent
+ * degradation as `contextualCaveat` above.
+ */
+const BUSINESS_IMPACT_TEXT: Record<string, string> = {
+  ACCESSIBILITY_VIOLATION: "This may make part of the page unusable for people using assistive technology, such as a screen reader or keyboard-only navigation.",
+  HTTP_ERROR_RESPONSE: "A request answering like this may stop a user from completing whatever they were doing — if this route is part of a flow users rely on, such as signing in or checking out, that attempt may not have gone through.",
+  NETWORK_REQUEST_FAILED: "A request failing outright may stop a user from completing whatever they were doing — if this route is part of a flow users rely on, that attempt may not have gone through.",
+  BROWSER_CONSOLE_ERROR: "A client-side error like this can leave part of the page not working as a user expects, even when nothing visibly crashed.",
+  FRONTEND_FAILED_RESOURCES: "A broken image, font, or script can make a page look unfinished or broken to a user, even though the rest of the page still works.",
+};
+
+const VITAL_BUSINESS_IMPACT_TEXT: Record<string, string> = {
+  CLS: "Elements shifting while a page loads can cause a user to click the wrong thing or lose their place — if this route is part of a flow users rely on, that friction may show up as mis-clicks or people giving up partway through.",
+  LCP: "A page slow to show its main content is one of the clearest reasons a user leaves before it finishes loading — if this route is part of a flow users rely on, slower loads may mean fewer people complete it.",
+  INP: "A page that feels slow to respond to clicks reads as broken to a user, even though it still works — if this route is part of a flow users rely on, that may show up as repeated clicks or abandoned attempts.",
+};
+
+function businessImpactLine(item: Record<string, unknown>): string {
+  const category = text(item.category, "");
+  if (category === "FRONTEND_POOR_WEB_VITAL") {
+    const metric = parseVitalMetric(item.dedupeKey);
+    return (metric && VITAL_BUSINESS_IMPACT_TEXT[metric]) ?? "";
+  }
+  return BUSINESS_IMPACT_TEXT[category] ?? "";
+}
+
+/**
  * The Automated Run chapter (QRS-RUN-005..008): what the run was pinned to, how each state went,
  * and how it ended. It keeps "the application prevented this" apart from "the run never got
  * there", and it never presents an execution failure as a missing Flow step.
@@ -1202,6 +1314,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
     .events td:first-child{width:24%}
     .events td:nth-child(2){width:24%}
     .annotation-shot{display:block;max-width:320px;margin-top:8px;border:1px solid #dcdcdc}
+    .finding-shot{display:block;max-width:420px;margin-top:8px;border:1px solid #dcdcdc}
     .summary{border:1px solid #dcdcdc;padding:18px;margin:18px 0}
     .metric{font:22px 'Courier New',monospace;color:#000}
     .metrics{display:flex;gap:10px;margin:18px 0}
@@ -1395,7 +1508,9 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
       <p>Tellann priority (CRITICAL/HIGH/MEDIUM/LOW/INFO, used throughout this document) ranks findings by how much they affect this run's declared Flow or session. Where a finding comes from automated tooling — the accessibility scanner's own impact rating (critical/serious/moderate/minor) — that is a different scale, scoped to the single rule it flags. A tool rating of "critical" does not by itself raise Tellann's priority for the finding derived from it; "0 critical findings" and "2 critical accessibility rules" appearing in the same report is not a contradiction.</p>
     </section>
 
-    ${data.findings.map((finding, index) => renderFinding(finding, index)).join("")}
+    ${renderTrend(data)}
+
+    ${data.findings.map((finding, index) => renderFinding(finding, index, input.screenshots)).join("")}
 
     ${data.hasFlow ? `<section class="major"><div class="section-label">Section // Outside the Flow</div><h2>Risks outside the selected Flow</h2>
       ${
@@ -1419,7 +1534,7 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
 
     ${renderFrontend(data)}
     ${renderBackend(data)}
-    ${renderAnnotations(data, input.annotationScreenshots)}
+    ${renderAnnotations(data, input.screenshots)}
     ${renderAppendix(data)}
 
     <div class="footer">Tellann quality report — generated by Tellann Desktop from the immutable report of run ${escapeHtml(
