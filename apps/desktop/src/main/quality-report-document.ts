@@ -1,4 +1,5 @@
 import { escapeHtml, renderHtmlToPdf } from "./validation-report";
+import { deriveRiskCategoryBreakdown, type CaptureTrack, type FindingSeverity, type RiskCategoryBreakdown, type RiskCategorySummary } from "@tellann/shared";
 
 /**
  * The comprehensive quality report a user downloads.
@@ -86,6 +87,32 @@ function factRows(rows: Array<[string, string]>): string {
     .join("");
 }
 
+const RISK_CATEGORY_LABEL: Record<string, string> = {
+  ACCESSIBILITY: "Accessibility",
+  FRONTEND_ERRORS: "Frontend Errors",
+  FRONTEND_PERFORMANCE: "Frontend Performance",
+  NETWORK_FAILURES: "Network Failures",
+  BACKEND_ERRORS: "Backend Errors",
+  BACKEND_PERFORMANCE: "Backend Performance",
+};
+
+/**
+ * One row's worth of text for a risk category: what was found, or - per
+ * QRS-MEAS-001 - why nothing was found rather than a bare zero that could be
+ * mistaken for "checked and clean."
+ */
+function riskCategoryStatusText(summary: RiskCategorySummary): string {
+  if (summary.status === "NOT_MEASURED") return `Not measured — ${summary.reason ?? "no evidence was gathered"}`;
+  if (summary.status === "INSUFFICIENT_EVIDENCE") return `Not enough evidence — ${summary.reason ?? "this run never reached a point where this category could be checked"}`;
+  if (summary.count === 0) return "Measured — no findings";
+  const bySeverity = (["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO"] as const)
+    .map((severity) => [severity, summary.bySeverity[severity]] as const)
+    .filter(([, count]) => count > 0)
+    .map(([severity, count]) => `${count} ${severity.toLowerCase()}`)
+    .join(", ");
+  return `${summary.count} finding${summary.count === 1 ? "" : "s"} (${bySeverity})`;
+}
+
 /** The parts of the payload every renderer reads, resolved once. */
 function readReport(report: Record<string, unknown>) {
   const sections = asRecord(report.sections);
@@ -98,6 +125,32 @@ function readReport(report: Record<string, unknown>) {
   const frontend = asRecord(sections.frontendSummary);
   const automated = asRecord(sections.automated);
   const viewportHistory = records(runSummary.viewportHistory);
+  const captureTracks = asArray(runSummary.captureTracks).map((item) => String(item)) as CaptureTrack[];
+  const eventCounts = asRecord(runSummary.eventCounts);
+  // Deterministic findings arrive sorted by priority, but AI-sourced
+  // suggestions are appended after that sorted block, unsorted relative to
+  // it — so the list as stored is not reliably priority-ordered end to end.
+  // Sorting once here keeps the Findings Index, the per-finding chapter and
+  // the "Immediate attention" cover callout consistent with each other and
+  // with the "Ordered by priority" claim already printed in this document.
+  const findings = records(inFlow.findings).sort(
+    (left, right) =>
+      (SEVERITY_RANK[text(left.priority, "MEDIUM").toUpperCase()] ?? 99) -
+      (SEVERITY_RANK[text(right.priority, "MEDIUM").toUpperCase()] ?? 99),
+  );
+  // Category and detection status for the Risk Summary — see QRS-MEAS-001:
+  // a category with no findings must never read the same as one that was
+  // never checked this run.
+  const riskCategories: RiskCategoryBreakdown = deriveRiskCategoryBreakdown(
+    findings.map((finding) => ({
+      category: text(finding.category, ""),
+      severity: (SEVERITY_RANK[text(finding.priority, "MEDIUM").toUpperCase()] !== undefined
+        ? text(finding.priority, "MEDIUM").toUpperCase()
+        : "MEDIUM") as FindingSeverity,
+    })),
+    captureTracks,
+    Object.fromEntries(Object.entries(eventCounts).map(([type, count]) => [type, Number(count) || 0])),
+  );
   return {
     // Payloads before session-scoped QA existed were all Flow reports and did
     // not carry scopeKind. Preserve that legacy interpretation; new flowless
@@ -128,10 +181,7 @@ function readReport(report: Record<string, unknown>) {
     // A run that never opened a browser has no viewport, no framework-state
     // evidence and nothing "window resolution" could ever mean — those rows
     // are left out of the document rather than printed as "Not recorded".
-    backendOnly: (() => {
-      const tracks = asArray(runSummary.captureTracks).map((item) => String(item));
-      return tracks.includes("BACKEND") && !tracks.includes("FRONTEND");
-    })(),
+    backendOnly: captureTracks.includes("BACKEND") && !captureTracks.includes("FRONTEND"),
     backendEndpoints: records(backend.endpoints),
     backendModels: records(backend.models),
     backendErrorGroups: records(backend.serverErrorGroups),
@@ -149,19 +199,11 @@ function readReport(report: Record<string, unknown>) {
     frontendLimitations: asArray(frontend.limitations).map((item) => String(item)),
     viewportHistory,
     latestViewport: asRecord(viewportHistory.at(-1)),
-    eventCounts: asRecord(runSummary.eventCounts),
+    eventCounts,
     recommendations: records(inFlow.recommendedNextActions),
-    // Deterministic findings arrive sorted by priority, but AI-sourced
-    // suggestions are appended after that sorted block, unsorted relative to
-    // it — so the list as stored is not reliably priority-ordered end to end.
-    // Sorting once here keeps the Findings Index, the per-finding chapter and
-    // the "Immediate attention" cover callout consistent with each other and
-    // with the "Ordered by priority" claim already printed in this document.
-    findings: records(inFlow.findings).sort(
-      (left, right) =>
-        (SEVERITY_RANK[text(left.priority, "MEDIUM").toUpperCase()] ?? 99) -
-        (SEVERITY_RANK[text(right.priority, "MEDIUM").toUpperCase()] ?? 99),
-    ),
+    findings,
+    captureTracks,
+    riskCategories,
     // QRS-RUN-003 companion: the run's own stop reason, translated into a
     // verification verdict on the cover page rather than printed as a raw enum.
     completionReason: typeof runSummary.boundaryOutcome === "string" ? runSummary.boundaryOutcome : null,
@@ -1374,6 +1416,13 @@ export function qualityReportHtml(input: QualityReportDocumentInput): string {
             : "Browser-level evidence only",
       ],
     ])}</table>
+    <h3>Risk summary</h3>
+    <p class="muted">Behavioral and functional-correctness risk, by category. A category with no findings reads "Measured — no findings" only when this run actually had the chance to check it; "Not measured" means its capture track was off, and "Not enough evidence" means the track was on but the run never reached a point where this category could be checked — neither is the same as a clean result.</p>
+    <table class="facts">${factRows(
+      (Object.entries(data.riskCategories) as Array<[string, RiskCategorySummary]>).map(
+        ([id, summary]) => [RISK_CATEGORY_LABEL[id] ?? id, riskCategoryStatusText(summary)] as [string, string],
+      ),
+    )}</table>
     ${
       data.runSummary.captureDegraded
         ? '<div class="notice"><strong>Capture was degraded.</strong> Read the limitations in the evidence appendix before relying on the coverage figure in this report.</div>'

@@ -198,6 +198,7 @@ export function analyzeCodebase(
   let stats = {
     callSites: 0, internalCalls: 0, externalCalls: 0, unresolvedCalls: 0,
     imports: 0, internalImports: 0, externalImports: 0, unresolvedImports: 0,
+    aliasPatternImports: 0, aliasPatternImportsResolved: 0,
   };
   const environmentKeys = new Set<string>();
   let analyzedFiles = plan.reusable.length;
@@ -217,6 +218,15 @@ export function analyzeCodebase(
       environmentKeys, emitFor, fileHashes,
     );
     analyzedFiles = emitFor ? emitFor.size + plan.reusable.length : program.sourceFiles.length;
+
+    // A full scan is the only time this count covers the whole repository; an
+    // incremental run only walked the dirty files, so a quiet alias pattern
+    // elsewhere would look identical to a broken one here.
+    if (plan.mode === 'full' && stats.aliasPatternImports > 0 && stats.aliasPatternImportsResolved === 0) {
+      graph.warn(
+        `${stats.aliasPatternImports} import(s) use a path-alias pattern (such as "@/*") that this scan could not resolve to a file. Coupling, circular-dependency, and dead-code results that depend on those imports are unreliable until the alias is resolved - check for a tsconfig "paths" entry, a bundler "resolve.alias", or a monorepo package this scan did not discover.`,
+      );
+    }
   }
 
   onProgress?.('GRAPHING', 58, `Reading ${inventory.pythonAnalyzable.length} Python source file(s)`);
@@ -253,7 +263,7 @@ export function analyzeCodebase(
 
   onProgress?.('ANALYZING_ARCHITECTURE', 86, 'Clustering domains and measuring coupling');
   const unresolvedRatio = stats.callSites ? stats.unresolvedCalls / stats.callSites : 0;
-  const architecture = analyzeArchitecture(graph, unresolvedRatio);
+  const architecture = analyzeArchitecture(graph, unresolvedRatio, root, inventory.packages);
 
   // Domains are known only after clustering, so features are labelled here.
   const domainByEntity = new Map<string, string>();
@@ -493,7 +503,7 @@ export function buildSanitizedSourceManifest(rootInput: string) {
   const inventory = buildInventory(root);
   const plan = planArchive(root, inventory, Number.MAX_SAFE_INTEGER);
   return {
-    checksum: digest(plan.entries.map((entry) => `${entry.path} ${entry.sha256}`).join('\n')),
+    checksum: digest(plan.entries.map((entry) => `${entry.path} ${entry.sha256}`).join('\n')),
     files: plan.entries.map((entry) => ({
       path: entry.path,
       bytes: Buffer.from(entry.contentBase64, 'base64').byteLength,

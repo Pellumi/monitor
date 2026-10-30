@@ -2,6 +2,7 @@ import type ts from 'typescript';
 import type { CodeEvidence } from '@tellann/desktop-contracts';
 import type { GraphBuilder } from './core';
 import type { PackageBoundary } from './inventory';
+import type { ModuleResolution } from './program';
 
 /**
  * Everything an analyzer needs while walking one source file. Shared so the
@@ -27,8 +28,10 @@ export type FileContext = {
   scope: () => string;
   /** Entity id for a repository-relative path, if that file is in the graph. */
   entityForFile: (file: string) => string | undefined;
-  /** Resolves a module specifier to a repository-relative path, when internal. */
-  resolveModule: (specifier: string, from: ts.SourceFile) => string | null;
+  /** Resolves a module specifier, distinguishing internal / external / unresolved. */
+  resolveModule: (specifier: string, from: ts.SourceFile) => ModuleResolution;
+  /** True if a specifier matches one of the repository's path-alias patterns. */
+  matchesAliasPattern: (specifier: string) => boolean;
   /** Maps a resolved declaration node to its entity id, when one was recorded. */
   entityForDeclaration: (declaration: ts.Node) => string | undefined;
   evidence: (node: ts.Node, kind: string, analyzer: string, confidence: number) => CodeEvidence;

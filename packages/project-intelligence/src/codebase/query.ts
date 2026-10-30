@@ -146,7 +146,13 @@ export function blastRadiusInAnalysis(
   maxNodes = 2_000,
 ): BlastRadiusResult {
   const incoming = new Map<string, string[]>();
+  const exportsOf = new Map<string, string[]>();
   for (const edge of analysis.relationships) {
+    if (edge.type === 'EXPORTS') {
+      const bucket = exportsOf.get(edge.source);
+      if (bucket) bucket.push(edge.target);
+      else exportsOf.set(edge.source, [edge.target]);
+    }
     if (!STRUCTURAL.has(edge.type)) continue;
     const bucket = incoming.get(edge.target);
     if (bucket) bucket.push(edge.source);
@@ -171,6 +177,20 @@ export function blastRadiusInAnalysis(
     frontier = next;
   }
   visited.delete(entityId);
+
+  // The walk above only crosses file-to-file edges, so a file-rooted query
+  // never reaches the functions, endpoints, jobs, tests or features declared
+  // inside the files it found - FUNCTIONS and the rest would always read 0.
+  // Pull in each affected file's exported symbols: what another file could
+  // actually be relying on, not its private internals.
+  for (const id of [...visited]) {
+    if (byId.get(id)?.type !== 'file') continue;
+    for (const symbolId of exportsOf.get(id) ?? []) {
+      if (visited.has(symbolId)) continue;
+      if (visited.size >= maxNodes) { truncated = true; break; }
+      visited.add(symbolId);
+    }
+  }
 
   const affected = { modules: 0, functions: 0, endpoints: 0, jobs: 0, tests: 0, features: 0 };
   for (const id of visited) {

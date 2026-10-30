@@ -138,6 +138,9 @@ importers:
       '@tellann/project-intelligence':
         specifier: workspace:*
         version: link:../../packages/project-intelligence
+      '@tellann/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@xyflow/react':
         specifier: ^12.11.0
         version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.4(react@19.2.4))(react@19.2.4)

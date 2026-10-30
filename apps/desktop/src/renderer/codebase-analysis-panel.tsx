@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import type { CodebaseAnalysis, CodebaseFinding } from "@tellann/desktop-contracts";
 import {
   AlertTriangle,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Download,
@@ -10,6 +11,7 @@ import {
   Loader2,
   RefreshCw,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import { useDesktop } from "./desktop-context";
 
@@ -283,6 +285,7 @@ function AnalysisSummary({ analysis }: { analysis: CodebaseAnalysis }) {
 type ReportState = {
   status: "idle" | "saving" | "saved" | "error";
   message: string | null;
+  filePath?: string | null;
 };
 
 /**
@@ -295,11 +298,24 @@ function useRiskReport(applicationId: string, findings: CodebaseFinding[]) {
     message: null,
   });
 
+  const dismissReport = useCallback(() => {
+    setReport({ status: "idle", message: null, filePath: null });
+  }, []);
+
   // A rescan can change the findings, so a "Saved" message would describe a
   // report of the previous result.
   useEffect(() => {
     setReport({ status: "idle", message: null });
   }, [findings]);
+
+  // Auto-dismiss the toast after 8 seconds (matching app toast TTL).
+  useEffect(() => {
+    if (report.status !== "saved" && report.status !== "error") return;
+    const timer = window.setTimeout(() => {
+      setReport({ status: "idle", message: null, filePath: null });
+    }, 8_000);
+    return () => window.clearTimeout(timer);
+  }, [report.status, report.message]);
 
   const downloadReport = useCallback(async () => {
     const save = window.tellann?.projects?.saveCodebaseRiskReport;
@@ -321,6 +337,7 @@ function useRiskReport(applicationId: string, findings: CodebaseFinding[]) {
       setReport({
         status: "saved",
         message: `Saved ${result.filename ?? "the report"}.`,
+        filePath: result.filePath,
       });
     } catch (error) {
       setReport({
@@ -330,7 +347,7 @@ function useRiskReport(applicationId: string, findings: CodebaseFinding[]) {
     }
   }, [applicationId]);
 
-  return { report, downloadReport };
+  return { report, downloadReport, dismissReport };
 }
 
 /** Secondary by design: the page's primary action is the next setup step. */
@@ -354,14 +371,73 @@ function DownloadReportButton({
   );
 }
 
-function ReportStatus({ report }: { report: ReportState }) {
-  if (!report.message) return null;
+function ReportToast({
+  report,
+  onDismiss,
+}: {
+  report: ReportState;
+  onDismiss(): void;
+}) {
+  useEffect(() => {
+    if (report.status !== "saved" && report.status !== "error") return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onDismiss();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [report.status, onDismiss]);
+
+  if (!report.message || (report.status !== "saved" && report.status !== "error")) {
+    return null;
+  }
+
+  const isError = report.status === "error";
+
   return (
-    <p
-      className={`analysis-risk-report-status${report.status === "error" ? " is-error" : ""}`}
-    >
-      {report.message}
-    </p>
+    <div className="notification-toaster" role="region" aria-label="Notifications">
+      <div
+        className={`notification-toast ${isError ? "severity-high" : "severity-success"}`}
+        role={isError ? "alert" : "status"}
+      >
+        {isError ? (
+          <AlertTriangle
+            size={16}
+            aria-hidden="true"
+            style={{ color: "#f87171", flexShrink: 0, marginTop: "1px" }}
+          />
+        ) : (
+          <CheckCircle2
+            size={16}
+            aria-hidden="true"
+            style={{ color: "#34d399", flexShrink: 0, marginTop: "1px" }}
+          />
+        )}
+        <div className="notification-toast-body">
+          <strong>{isError ? "Download failed" : "Report saved"}</strong>
+          <span>{report.message}</span>
+          {report.filePath && window.tellann?.system?.openPath ? (
+            <button
+              type="button"
+              className="notification-toast-action"
+              onClick={() => {
+                void window.tellann?.system?.openPath(report.filePath!).catch(() => undefined);
+              }}
+            >
+              Open
+            </button>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="notification-toast-close"
+          aria-label="Dismiss notification"
+          title="Dismiss"
+          onClick={onDismiss}
+        >
+          <X size={14} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -440,7 +516,6 @@ function RiskNotice({
       {hidden > 0 ? (
         <p className="analysis-risk-more">+{hidden} more in the report</p>
       ) : null}
-      <ReportStatus report={report} />
     </section>
   );
 }
@@ -491,7 +566,6 @@ function AnalysisStrip({
           ) : null}
         </div>
       </div>
-      <ReportStatus report={report} />
     </div>
   );
 }
@@ -684,7 +758,10 @@ export function CodebaseAnalysisPanel({
     [findings],
   );
   const analysisLimited = useMemo(() => findings.some(isAnalysisLimit), [findings]);
-  const { report, downloadReport } = useRiskReport(applicationId, findings);
+  const { report, downloadReport, dismissReport } = useRiskReport(
+    applicationId,
+    findings,
+  );
 
   if (!loaded) {
     return (
@@ -985,6 +1062,7 @@ export function CodebaseAnalysisPanel({
           <AnalysisSummary analysis={analysis} />
         </div>
       )}
+      <ReportToast report={report} onDismiss={dismissReport} />
     </section>
   );
 }

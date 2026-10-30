@@ -96,6 +96,39 @@ export type IntegrationStatus = 'ACTIVE' | 'INACTIVE' | 'NOT_CONFIGURED';
 
 export type FindingSeverity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO';
 
+/**
+ * The behavioral/functional-correctness risk categories the Risk Report
+ * breaks findings into. Deliberately excludes `CAPTURE_DEGRADED` (a finding
+ * about the capture pipeline breaking, not a QA dimension) and anything
+ * reconciliation already covers via `MeasuredCoverage.errorCoverage` /
+ * `transitionCoverage` — a second, parallel status for the same gap would
+ * risk the two disagreeing.
+ */
+export type RiskCategoryId =
+  | 'ACCESSIBILITY'
+  | 'FRONTEND_ERRORS'
+  | 'FRONTEND_PERFORMANCE'
+  | 'NETWORK_FAILURES'
+  | 'BACKEND_ERRORS'
+  | 'BACKEND_PERFORMANCE';
+
+/**
+ * A category's detection status, same three-state model as `MeasuredValue`
+ * (see above) but scoped to "did this category have a chance to produce a
+ * finding this run" rather than to a single number. A finding that exists is
+ * unambiguous proof of MEASURED; the status only has to resolve the ambiguous
+ * case of zero findings in a category - clean, or never checked.
+ */
+export interface RiskCategorySummary {
+  status: MeasurementStatus;
+  /** Why, when not MEASURED - e.g. "Backend capture track was not enabled for this run." */
+  reason: string | null;
+  count: number;
+  bySeverity: Record<FindingSeverity, number>;
+}
+
+export type RiskCategoryBreakdown = Record<RiskCategoryId, RiskCategorySummary>;
+
 /** Mirrors `MissingStateCategory` in @tellann/rules, which is its only source. */
 export type MissingStateCategory = 'LOADING' | 'EMPTY' | 'ERROR' | 'RECOVERY';
 

@@ -1,12 +1,19 @@
 import { useEffect, useRef } from "react";
-import { AlertTriangle, X } from "lucide-react";
+import { AlertTriangle, Pencil, X } from "lucide-react";
 
 export type QaRunStartFailure = {
   title: string;
   summary: string;
   targetUrl: string;
+  /** Short badge next to the URL, e.g. "Unreachable". Omit to hide the badge. */
+  statusLabel?: string;
+  statusTone?: "danger" | "warning";
+  /** One-line preview shown next to the "Technical details" summary before it's expanded. */
+  technicalSummary?: string;
   nextSteps: string[];
   technicalDetails: string;
+  retryLabel?: string;
+  secondaryLabel?: string;
 };
 
 function cleanTechnicalMessage(cause: unknown): string {
@@ -29,46 +36,57 @@ export function describeQaRunStartFailure(
 
   if (/ERR_CONNECTION_REFUSED|ECONNREFUSED|connection refused/i.test(technicalDetails)) {
     return {
-      title: "Tellann couldn't reach your application",
-      summary:
-        "The QA browser could not connect to the application URL, so the run was stopped before capture began.",
+      title: "Unable to connect to your application",
+      summary: "Tellann couldn't establish a connection to your app. Check that it's running and accessible.",
       targetUrl,
+      statusLabel: "Unreachable",
+      statusTone: "danger",
+      technicalSummary: "Connection failed",
       nextSteps: [
         hasLaunchCommands
           ? 'Start the application yourself, or select a script under "Local application process" and approve it for this run.'
           : "Start the application from its project folder and leave it running.",
-        "Open the application URL and confirm that its host and port are correct.",
-        'Return here and choose "Try again".',
+        "Verify the URL's host and port are correct, then retry.",
       ],
       technicalDetails,
+      retryLabel: "Retry connection",
+      secondaryLabel: "Edit URL",
     };
   }
 
   if (/Timeout|timed out|ERR_TIMED_OUT/i.test(technicalDetails)) {
     return {
-      title: "The application did not become ready",
-      summary:
-        "Tellann waited for the application to load, but it did not respond before the startup window ended.",
+      title: "Your application didn't respond in time",
+      summary: "Tellann reached the URL, but the app didn't finish loading before the startup window ended.",
       targetUrl,
+      statusLabel: "Not responding",
+      statusTone: "warning",
+      technicalSummary: "Timed out",
       nextSteps: [
         "Check the application terminal for startup or build errors.",
-        "Confirm that the application URL uses the port printed by the development server.",
-        'Once the page loads normally, return here and choose "Try again".',
+        "Confirm the URL uses the port printed by the development server, then retry.",
       ],
       technicalDetails,
+      retryLabel: "Retry connection",
+      secondaryLabel: "Edit URL",
     };
   }
 
   if (/Invalid URL|ERR_INVALID_URL|invalid.*target/i.test(technicalDetails)) {
     return {
-      title: "The application URL is not valid",
+      title: "The application URL isn't valid",
       summary: "Tellann needs a complete HTTP or HTTPS URL before it can open the QA browser.",
       targetUrl,
+      statusLabel: "Invalid",
+      statusTone: "warning",
+      technicalSummary: "Invalid URL",
       nextSteps: [
-        'Choose "Review settings" and enter a URL such as http://localhost:3000.',
-        "Confirm that the application is running at that address, then try again.",
+        "Enter a complete URL, such as http://localhost:3000.",
+        "Confirm the application is running at that address, then retry.",
       ],
       technicalDetails,
+      retryLabel: "Try again",
+      secondaryLabel: "Edit URL",
     };
   }
 
@@ -78,11 +96,14 @@ export function describeQaRunStartFailure(
       summary:
         "Tellann captures one local QA run at a time on this device, so this run was not started. The run already going is untouched and still recording.",
       targetUrl,
+      technicalSummary: "Run already active",
       nextSteps: [
         'Open the active run from "QA run running" in the status bar.',
         "End that run before starting a new one.",
       ],
       technicalDetails,
+      retryLabel: "Try again",
+      secondaryLabel: "Review settings",
     };
   }
 
@@ -91,11 +112,14 @@ export function describeQaRunStartFailure(
       title: "This Flow is not ready for QA",
       summary: "The selected Flow must be published and initialized in this application before capture can begin.",
       targetUrl,
+      technicalSummary: "Flow not initialized",
       nextSteps: [
         "Open the Flow and complete its initialization for this application.",
         "Return to QA Runs, select the initialized Flow, and try again.",
       ],
       technicalDetails,
+      retryLabel: "Try again",
+      secondaryLabel: "Review settings",
     };
   }
 
@@ -103,11 +127,14 @@ export function describeQaRunStartFailure(
     title: "The QA run couldn't start",
     summary: "Tellann stopped the run safely after encountering a startup error.",
     targetUrl,
+    technicalSummary: "Startup failed",
     nextSteps: [
       "Review the technical details below and correct the application or run settings.",
       "Confirm that the application is available, then try again.",
     ],
     technicalDetails: technicalDetails || "Desktop operation failed",
+    retryLabel: "Try again",
+    secondaryLabel: "Review settings",
   };
 }
 
@@ -167,7 +194,7 @@ export function QaRunStartErrorModal({
 
         <div className="qa-run-error-heading">
           <span className="qa-run-error-icon" aria-hidden="true">
-            <AlertTriangle size={20} />
+            <AlertTriangle size={18} />
           </span>
           <div>
             <h2 id="qa-run-error-title">{failure.title}</h2>
@@ -176,12 +203,31 @@ export function QaRunStartErrorModal({
         </div>
 
         <div className="qa-run-error-target">
-          <span>Application URL</span>
-          <code>{failure.targetUrl}</code>
+          <div className="qa-run-error-target-head">
+            <span>Application URL</span>
+            {failure.statusLabel && (
+              <span className="status-pill" data-tone={failure.statusTone ?? "danger"}>
+                <span aria-hidden="true" />
+                {failure.statusLabel}
+              </span>
+            )}
+          </div>
+          <div className="qa-run-error-target-row">
+            <code>{failure.targetUrl}</code>
+            <button
+              type="button"
+              className="qa-run-error-edit"
+              disabled={busy}
+              onClick={onClose}
+              aria-label="Edit application URL"
+            >
+              <Pencil size={13} />
+            </button>
+          </div>
         </div>
 
         <div className="qa-run-error-steps">
-          <strong>What to do next</strong>
+          <strong>How to fix this</strong>
           <ol>
             {failure.nextSteps.map((step) => (
               <li key={step}>{step}</li>
@@ -190,7 +236,10 @@ export function QaRunStartErrorModal({
         </div>
 
         <details className="qa-run-error-details">
-          <summary>Technical details</summary>
+          <summary>
+            <span>Technical details</span>
+            {failure.technicalSummary && <span className="qa-run-error-details-tag">{failure.technicalSummary}</span>}
+          </summary>
           <code>{failure.technicalDetails}</code>
         </details>
 
@@ -201,7 +250,7 @@ export function QaRunStartErrorModal({
             disabled={busy}
             onClick={onClose}
           >
-            Review settings
+            {failure.secondaryLabel ?? "Review settings"}
           </button>
           <button
             ref={retryButtonRef}
@@ -210,7 +259,7 @@ export function QaRunStartErrorModal({
             disabled={busy}
             onClick={onRetry}
           >
-            {busy ? "Starting…" : "Try again"}
+            {busy ? "Starting…" : failure.retryLabel ?? "Try again"}
           </button>
         </div>
       </div>

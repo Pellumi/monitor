@@ -1,5 +1,21 @@
-import type { CodebaseFinding, CodeEntity } from '@tellann/desktop-contracts';
-import { CONFIDENCE, GraphBuilder, stableId } from './core';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { CodebaseFinding, CodeEntity, CodeRelationship } from '@tellann/desktop-contracts';
+import { CONFIDENCE, GraphBuilder, slash, stableId } from './core';
+import type { PackageBoundary } from './inventory';
+
+/**
+ * True for an IMPORTS edge that exists only because of a type-only import
+ * (`import type`, or a named import where every specifier is type-only).
+ * Type erasure removes these at build time - no runtime binding crosses the
+ * edge - so they cannot cause the undefined-at-import-time failures a
+ * runtime circular dependency can, and a bundler can still split the modules
+ * apart. Every other edge is treated as capable of causing a cycle.
+ */
+const isTypeOnlyImportEdge = (edge: CodeRelationship): boolean =>
+  edge.type === 'IMPORTS'
+  && edge.evidence.length > 0
+  && edge.evidence.every((item) => item.kind === 'resolved-import-type-only');
 
 /** Structural edges that mean "this unit needs that unit". */
 const STRUCTURAL = new Set(['IMPORTS', 'CALLS', 'DEPENDS_ON', 'EXTENDS', 'IMPLEMENTS', 'USES']);
@@ -46,6 +62,11 @@ type ModuleGraph = {
   index: Map<string, number>;
   out: number[][];
   in: number[][];
+  /** Same as `out`, minus edges that exist only because of a type-only import.
+   * Cycle detection reads this instead of `out`, so a cycle closed purely by
+   * types - which the compiler erases and which cannot deadlock a bundler or
+   * leave a value undefined at import time - is not reported as one. */
+  cycleOut: number[][];
   /** Undirected adjacency with weights, for community detection. */
   neighbours: Array<Map<number, number>>;
   degree: number[];
@@ -59,6 +80,7 @@ function buildModuleGraph(graph: GraphBuilder): ModuleGraph {
   const index = new Map(ids.map((id, position) => [id, position]));
   const out: number[][] = ids.map(() => []);
   const incoming: number[][] = ids.map(() => []);
+  const cycleOut: number[][] = ids.map(() => []);
   const neighbours: Array<Map<number, number>> = ids.map(() => new Map());
   const degree = new Array<number>(ids.length).fill(0);
   let totalWeight = 0;
@@ -73,6 +95,7 @@ function buildModuleGraph(graph: GraphBuilder): ModuleGraph {
   }
 
   const seen = new Set<string>();
+  const seenCycle = new Set<string>();
   for (const edge of graph.relationships) {
     if (!STRUCTURAL.has(edge.type)) continue;
     const from = fileOfEntity.get(edge.source) ?? index.get(edge.source);
@@ -84,6 +107,10 @@ function buildModuleGraph(graph: GraphBuilder): ModuleGraph {
       out[from].push(to);
       incoming[to].push(from);
     }
+    if (!isTypeOnlyImportEdge(edge) && !seenCycle.has(key)) {
+      seenCycle.add(key);
+      cycleOut[from].push(to);
+    }
     neighbours[from].set(to, (neighbours[from].get(to) ?? 0) + 1);
     neighbours[to].set(from, (neighbours[to].get(from) ?? 0) + 1);
     degree[from] += 1;
@@ -91,13 +118,14 @@ function buildModuleGraph(graph: GraphBuilder): ModuleGraph {
     totalWeight += 1;
   }
 
-  return { ids, index, out, in: incoming, neighbours, degree, totalWeight };
+  return { ids, index, out, in: incoming, cycleOut, neighbours, degree, totalWeight };
 }
 
 /**
  * Tarjan's algorithm, iterative so a deep dependency chain cannot overflow the
  * stack. Returns every component with more than one member: those are the
- * places where everything can reach everything else.
+ * places where everything can reach everything else. Walks `cycleOut`, not
+ * `out`, so a cycle closed only by a type-only import is not reported.
  */
 function stronglyConnectedComponents(module: ModuleGraph): number[][] {
   const size = module.ids.length;
@@ -122,8 +150,8 @@ function stronglyConnectedComponents(module: ModuleGraph): number[][] {
         onStack[node] = true;
       }
       let recursed = false;
-      while (frame.edge < module.out[node].length) {
-        const next = module.out[node][frame.edge];
+      while (frame.edge < module.cycleOut[node].length) {
+        const next = module.cycleOut[node][frame.edge];
         frame.edge += 1;
         if (index[next] === -1) {
           work.push({ node: next, edge: 0 });
@@ -151,6 +179,36 @@ function stronglyConnectedComponents(module: ModuleGraph): number[][] {
     }
   }
   return components;
+}
+
+/**
+ * A real path through a strongly-connected component, following `cycleOut`
+ * edges that stay inside it, starting from `members[0]` and ending back at
+ * `members[0]` once every member has been visited. Returns a path one longer
+ * than `members` on success (the closing step repeats the start); a shorter
+ * result means the walk could not cover every member along one simple path
+ * (possible in a component with more than one cycle braided together), and
+ * the caller falls back to the plain member order.
+ */
+function findCyclePath(module: ModuleGraph, members: number[]): number[] {
+  if (members.length === 0) return [];
+  const inComponent = new Set(members);
+  const start = members[0];
+  const path: number[] = [start];
+  const visited = new Set<number>([start]);
+  let current = start;
+
+  while (visited.size < members.length) {
+    const next = module.cycleOut[current].find(
+      (candidate) => inComponent.has(candidate) && !visited.has(candidate),
+    );
+    if (next === undefined) return path;
+    path.push(next);
+    visited.add(next);
+    current = next;
+  }
+  if (module.cycleOut[current].includes(start)) path.push(start);
+  return path;
 }
 
 /**
@@ -351,9 +409,56 @@ function packageDomainName(graph: GraphBuilder, members: CodeEntity[]): string {
   return titleCase(raw.replace(/^@[^/]+\//, '').replace(/^.*\//, ''));
 }
 
+const SCRIPT_SRC = /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["'][^>]*>/gi;
+
+/**
+ * Files a root-level HTML file loads with `<script src="...">` - Vite's
+ * `index.html` and any sibling multi-page entry. The browser reaches these
+ * directly; nothing in the repository ever imports them, so without this
+ * they read as dead code even though they are the application's actual
+ * entrypoint. Scoped to each package boundary's own root directory, which is
+ * where this file conventionally lives; a script referenced from an HTML file
+ * elsewhere in the tree is not picked up.
+ */
+function discoverHtmlEntrypoints(root: string, packages: PackageBoundary[]): Set<string> {
+  const entrypoints = new Set<string>();
+
+  for (const boundary of packages) {
+    const directory = path.join(root, ...boundary.root.split('/').filter((part) => part !== '.'));
+    let htmlFiles: string[];
+    try {
+      htmlFiles = fs.readdirSync(directory, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.html'))
+        .map((entry) => entry.name);
+    } catch {
+      continue;
+    }
+
+    for (const fileName of htmlFiles) {
+      let html: string;
+      try {
+        html = fs.readFileSync(path.join(directory, fileName), 'utf8');
+      } catch {
+        continue;
+      }
+      for (const match of html.matchAll(SCRIPT_SRC)) {
+        const src = match[1];
+        if (!src || /^([a-z]+:)?\/\//i.test(src) || src.startsWith('data:')) continue; // external or inline, not a repository file
+        const resolved = src.startsWith('/')
+          ? path.join(boundary.root, src.slice(1))
+          : path.join(boundary.root, path.dirname(fileName), src);
+        entrypoints.add(slash(resolved));
+      }
+    }
+  }
+  return entrypoints;
+}
+
 export function analyzeArchitecture(
   graph: GraphBuilder,
   unresolvedCallRatio: number,
+  root: string,
+  packages: PackageBoundary[],
 ): ArchitectureResult {
   const module = buildModuleGraph(graph);
   const size = module.ids.length;
@@ -441,15 +546,34 @@ export function analyzeArchitecture(
   // ── Cycles and strongly connected components ───────────────────────────────
   const components = stronglyConnectedComponents(module);
   for (const component of components.slice(0, 100)) {
-    const members = component.map((position) => graph.entity(module.ids[position])).filter(Boolean) as CodeEntity[];
+    // Deterministic order so the title and description do not depend on
+    // Tarjan's traversal order, and a real path through the actual edges so
+    // the description names an import that truly exists, in the direction it
+    // truly points - not just the component's member set in arbitrary order.
+    const sorted = component.slice().sort((a, b) => {
+      const left = graph.entity(module.ids[a])?.path ?? '';
+      const right = graph.entity(module.ids[b])?.path ?? '';
+      return left < right ? -1 : left > right ? 1 : 0;
+    });
+    const path = findCyclePath(module, sorted);
+    const orderedPositions = path.length === sorted.length + 1 ? path : sorted;
+    const members = orderedPositions.map((position) => graph.entity(module.ids[position])).filter(Boolean) as CodeEntity[];
+    const anchor = members[0];
+
+    const memberIds = new Set(members.map((member) => member.id));
+    const cycleEvidence = graph.relationships
+      .filter((edge) => edge.type === 'IMPORTS' && memberIds.has(edge.source) && memberIds.has(edge.target))
+      .flatMap((edge) => edge.evidence)
+      .slice(0, 10);
+
     const finding: CodebaseFinding = {
       id: stableId('finding', `scc:${component.slice().sort((a, b) => a - b).join(',')}`),
       kind: 'CYCLE',
       severity: component.length > 6 ? 'HIGH' : 'WARNING',
-      title: `Circular dependency across ${component.length} modules`,
+      title: `Circular dependency across ${component.length} modules (${anchor?.name ?? 'unknown'})`,
       description: `${members.slice(0, 6).map((member) => member.path ?? member.name).join(' -> ')}${component.length > 6 ? ' -> …' : ''}. Every module in this group can reach every other, so they cannot be changed or tested independently.`,
       entityIds: members.map((member) => member.id).slice(0, 30),
-      evidence: [],
+      evidence: cycleEvidence,
     };
     graph.finding(finding);
   }
@@ -504,6 +628,9 @@ export function analyzeArchitecture(
   const entrypointFiles = new Set<string>();
   for (const type of ['endpoint', 'ui_route', 'ui_action', 'job'] as const) {
     for (const entity of graph.ofType(type)) if (entity.path) entrypointFiles.add(stableId('file', entity.path));
+  }
+  for (const htmlEntrypoint of discoverHtmlEntrypoints(root, packages)) {
+    entrypointFiles.add(stableId('file', htmlEntrypoint));
   }
   const unreachable = coupling.filter((record) =>
     record.fanIn === 0 && record.fanOut > 0 && !entrypointFiles.has(record.entityId));
@@ -593,6 +720,20 @@ export function blastRadius(graph: GraphBuilder, entityId: string, maxDepth = 8,
     depth += 1;
   }
   visited.delete(entityId);
+
+  // The walk above only crosses file-to-file edges, so a file-rooted query
+  // never reaches the functions, endpoints, jobs, tests or features declared
+  // inside the files it found - FUNCTIONS and the rest would always read 0.
+  // Pull in each affected file's exported symbols: what another file could
+  // actually be relying on, not its private internals.
+  for (const id of [...visited]) {
+    if (graph.entity(id)?.type !== 'file') continue;
+    for (const edge of graph.outgoingOf(id)) {
+      if (edge.type !== 'EXPORTS' || visited.has(edge.target)) continue;
+      if (visited.size >= maxNodes) { truncated = true; break; }
+      visited.add(edge.target);
+    }
+  }
 
   const affected = { modules: 0, functions: 0, endpoints: 0, jobs: 0, tests: 0, features: 0 };
   for (const id of visited) {

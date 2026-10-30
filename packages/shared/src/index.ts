@@ -11,3 +11,5 @@ export * from './contracts/dashboard-overview';
 export * from './metrics';
 export * from './json-bigint';
 export * from './qa-run-title';
+export * from './measurement';
+export * from './risk-category';

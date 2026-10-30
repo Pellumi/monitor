@@ -3166,28 +3166,29 @@ img.profile-avatar {
 }
 
 .qa-run-error-modal {
-  width: min(640px, 100%);
+  width: min(540px, 100%);
 }
 .qa-run-error-heading {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 10px;
+  margin-bottom: 14px;
 }
 .qa-run-error-heading h2 {
-  font-size: 22px;
-  line-height: 1.25;
+  font-size: 17px;
+  line-height: 1.3;
 }
 .qa-run-error-heading p {
-  margin: 7px 0 0;
-  color: var(--text);
-  font-size: 13px;
+  margin: 5px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
 }
 .qa-run-error-icon {
   display: grid;
-  flex: 0 0 38px;
-  width: 38px;
-  height: 38px;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
   place-items: center;
   border: 1px solid #594c2b;
   border-radius: 4px;
@@ -3202,49 +3203,90 @@ img.profile-avatar {
 }
 .qa-run-error-target {
   display: grid;
-  gap: 7px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--surface-0);
+}
+.qa-run-error-target-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .qa-run-error-target span,
 .qa-run-error-steps > strong {
   color: var(--text-muted);
   font: 600 10px ui-monospace, var(--font-mono);
-  letter-spacing: 0.01em;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
-.qa-run-error-target code {
+.qa-run-error-target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qa-run-error-target-row code {
+  flex: 1;
   overflow-wrap: anywhere;
   color: var(--text-strong);
   font-size: 12px;
 }
+.qa-run-error-edit {
+  display: grid;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-muted);
+}
+.qa-run-error-edit:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--surface-1);
+  color: var(--text-strong);
+}
 .qa-run-error-steps {
-  margin: 18px 0;
+  margin: 14px 0;
+}
+.qa-run-error-steps > strong {
+  text-transform: none;
+  font-size: 12px;
+  letter-spacing: 0;
+  color: var(--text-strong);
 }
 .qa-run-error-steps ol {
   display: grid;
-  gap: 9px;
-  margin: 10px 0 0;
-  padding-left: 24px;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding-left: 20px;
   color: var(--text);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.45;
 }
 .qa-run-error-steps li::marker {
   color: var(--text-strong);
   font-weight: 700;
 }
 .qa-run-error-details {
-  margin: 0 0 22px;
+  margin: 0 0 16px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding-top: 10px;
   color: var(--text-muted);
   font-size: 11px;
 }
 .qa-run-error-details summary {
-  width: fit-content;
-  cursor: default;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+}
+.qa-run-error-details-tag {
+  color: var(--text-subtle);
+  font: 500 11px var(--font-ui);
 }
 .qa-run-error-details code {
   display: block;
@@ -7878,6 +7920,9 @@ button:disabled {
 }
 .notification-toast.severity-medium {
   border-left-color: #fbbf24;
+}
+.notification-toast.severity-success {
+  border-left-color: #34d399;
 }
 .notification-toast-body {
   display: flex;

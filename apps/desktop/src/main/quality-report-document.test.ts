@@ -393,6 +393,60 @@ test('an unmeasured vital says so rather than printing a zero', () => {
   assert.ok(html.includes('Not measured'), 'INP had no samples on this route');
 });
 
+// ── Risk summary ─────────────────────────────────────────────────────────
+
+/** `input()` with full control over runSummary (capture tracks, event counts) and findings. */
+function riskCategoryInput(runSummary: Record<string, unknown>, findings: Record<string, unknown>[] = []) {
+  const base = input();
+  (base.report as any).sections.runSummary = runSummary;
+  (base.report as any).sections.inFlowFindings = {
+    recommendedNextActions: [],
+    findings,
+    missingStates: [], missingTransitions: [], unexpectedStates: [],
+  };
+  return base;
+}
+
+test('a category whose capture track was never enabled reads as not measured, not as zero findings', () => {
+  const html = qualityReportHtml(riskCategoryInput({ captureTracks: ['BACKEND'], eventCounts: {} }));
+  assert.ok(html.includes('Risk summary'));
+  assert.ok(html.includes('Accessibility'));
+  assert.ok(html.includes('Not measured — Frontend capture track was not enabled for this run.'));
+});
+
+test('a category whose track ran but never got the chance reads as not enough evidence', () => {
+  // FRONTEND enabled, but no QA_ACCESSIBILITY_SCAN event: the scan never fired.
+  const html = qualityReportHtml(riskCategoryInput({ captureTracks: ['FRONTEND'], eventCounts: { QA_ROUTE_CHANGED: 2 } }));
+  assert.ok(html.includes('Not enough evidence'));
+});
+
+test('a category that ran clean reads as measured with no findings, not a bare zero', () => {
+  const html = qualityReportHtml(riskCategoryInput({
+    captureTracks: ['FRONTEND', 'BACKEND'],
+    eventCounts: { QA_ACCESSIBILITY_SCAN: 1, QA_ROUTE_CHANGED: 3, QA_PAGE_PERFORMANCE: 3, QA_REQUEST: 5, QA_BACKEND_REQUEST: 2 },
+  }));
+  assert.ok(html.includes('Measured — no findings'));
+});
+
+test('an actual finding is counted into its risk category with a severity breakdown, independent of capture-track state', () => {
+  const html = qualityReportHtml(riskCategoryInput(
+    { captureTracks: ['FRONTEND'], eventCounts: {} },
+    [{ id: 'f1', priority: 'HIGH', title: 'A console error', category: 'BROWSER_CONSOLE_ERROR', confidence: 0.9 }],
+  ));
+  assert.ok(html.includes('1 finding (1 high)'));
+});
+
+test('CAPTURE_DEGRADED and UI-quality findings are not folded into the risk category counts', () => {
+  const html = qualityReportHtml(riskCategoryInput(
+    { captureTracks: ['FRONTEND'], eventCounts: {} },
+    [
+      { id: 'f1', priority: 'LOW', title: 'Capture degraded', category: 'CAPTURE_DEGRADED', confidence: 1 },
+      { id: 'f2', priority: 'LOW', title: 'Layout issue', category: 'RESPONSIVE_LAYOUT', confidence: 1 },
+    ],
+  ));
+  assert.ok(!html.includes('1 finding (1 low)'));
+});
+
 test('the CSV carries the browser rows a spreadsheet would want', () => {
   const csv = qualityReportCsv(frontendInput());
   const sections = new Set(csv.split('\n').filter(Boolean).map((row) => row.split(',')[0]));
