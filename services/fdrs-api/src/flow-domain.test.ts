@@ -22,13 +22,17 @@ const authFlow: { states: FlowNodeInput[]; transitions: FlowEdgeInput[]; [key: s
 test('accepts a bounded flow and emits all synchronized projections', () => {
   assert.equal(validateFlow(authFlow.states, authFlow.transitions).valid, true);
   const diagrams = createFlowDiagrams(authFlow.states, authFlow.transitions);
-  assert.deepEqual(diagrams.map((item) => item.kind), ['FLOW', 'SEQUENCE', 'ACTIVITY', 'STATE_MACHINE']);
+  assert.deepEqual(diagrams.map((item) => item.kind), ['FLOW', 'SEQUENCE', 'USE_CASE', 'ACTIVITY', 'STATE_MACHINE']);
   for (const diagram of diagrams) {
     assert.equal(diagram.semanticNodeIds.length, authFlow.states.length);
     assert.equal(diagram.semanticEdgeIds.length, authFlow.transitions.length);
   }
   assert.match(diagrams[0].source, /Guest/);
   assert.match(diagrams[0].source, /Authenticated User/);
+  const useCase = diagrams.find((diagram) => diagram.kind === 'USE_CASE');
+  assert.match(useCase?.source ?? '', /Guest/);
+  assert.match(useCase?.source ?? '', /Click login/);
+  assert.match(useCase?.source ?? '', /subgraph application/);
 });
 
 test('keeps user-authored punctuation from breaking state-machine transitions', () => {

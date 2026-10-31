@@ -51,6 +51,7 @@ import {
   Network,
   MoveVertical,
   MoveHorizontal,
+  Download,
 } from "lucide-react";
 import {
   computeAutoLayout,
@@ -62,6 +63,7 @@ import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { useSidebarMode } from "@/components/sidebar-mode";
 import { RequiresSection, StateDeclarationSection, TransitionDeclarationSection } from "./declaration-sections";
 import { SustainabilityReviewPanel, type SustainabilityReview } from "./sustainability-review-panel";
+import { FlowExportDialog } from "./flow-export-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -533,6 +535,7 @@ export function FlowGraphEditor({
     "build" | "suggestions" | "history" | "settings"
   >("build");
   const [publishError, setPublishError] = useState<string | null>(null);
+  const [exportOpen, setExportOpen] = useState(false);
   const [sustainabilityReview, setSustainabilityReview] = useState<SustainabilityReview | null>(null);
   const builtFlowIdRef = useRef<string>("");
 
@@ -1296,6 +1299,15 @@ export function FlowGraphEditor({
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={!flow || flow.states.length === 0}
+            onClick={() => setExportOpen(true)}
+          >
+            <Download className="h-3.5 w-3.5" />
+            Export
+          </Button>
           {isDraft ? (
             <Button
               variant="primary"
@@ -1368,6 +1380,16 @@ export function FlowGraphEditor({
           onViewOnCanvas={(nodeIds) => {
             if (nodeIds[0]) setSelectedStateId(nodeIds[0]);
           }}
+        />
+      )}
+
+      {exportOpen && flow && (
+        <FlowExportDialog
+          appId={appId}
+          flowId={flowId}
+          flowName={flowName}
+          version={flow.version}
+          onClose={() => setExportOpen(false)}
         />
       )}
 

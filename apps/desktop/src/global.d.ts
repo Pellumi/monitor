@@ -216,7 +216,8 @@ declare global {
         previewFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<FlowReviewPreview>;
         applyFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
         declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
-        getFlowDiagrams(applicationId: string, flowId: string, versionId: string): Promise<Record<string, unknown>>;
+        getFlowDiagrams(applicationId: string, flowId: string, versionId?: string): Promise<Record<string, unknown>>;
+        saveFlowExport(filename: string, contentBase64: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string }>;
         initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
         getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
         getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;

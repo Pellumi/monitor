@@ -37,6 +37,7 @@ import {
   ChevronDown,
   CircleAlert,
   CircleCheck,
+  Download,
   History,
   Lock,
   Maximize,
@@ -76,6 +77,7 @@ import {
   TERMINAL_KINDS,
 } from './panels';
 import { RequiresEditor, StateDeclarationEditor, TransitionDeclarationEditor } from './declaration-panels';
+import { FlowExportDialog } from './flow-export-dialog';
 import { transitionDeclarationSummary } from '@tellann/flow-layout';
 import {
   flowIsEditable,
@@ -252,6 +254,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
   const [resizing, setResizing] = useState(false);
   const [placement, setPlacement] = useState<Placement | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const editable = flowIsEditable(flow);
   const proposed = (flow as { aiDraftStatus?: string | null } | null)?.aiDraftStatus === 'PENDING_REVIEW';
@@ -514,7 +517,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
   // Keyboard: Delete removes, Enter or F2 renames, Esc clears, Shift+1 fits the view.
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || deleteOpen) return;
+      if (event.defaultPrevented || deleteOpen || exportOpen) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest('input, textarea, select, [contenteditable="true"], .desktop-modal, .palette, .select-content')) return;
       if ((event.shiftKey && event.code === 'Digit1') || ((event.ctrlKey || event.metaKey) && event.key === '0')) {
@@ -538,7 +541,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [deleteOpen, deleteSelection, editable, fitView, placement, renameSelection, selection]);
+  }, [deleteOpen, deleteSelection, editable, exportOpen, fitView, placement, renameSelection, selection]);
 
   const onNodeContextMenu = useCallback((event: ReactMouseEvent, node: StateNodeType) => {
     const state = flow?.states.find((item) => item.id === node.id);
@@ -702,6 +705,10 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
         </div>
         <div className="page-toolbar-spacer" />
         <div className="page-actions">
+          <button className="button" type="button" disabled={flow.states.length === 0} onClick={() => setExportOpen(true)}>
+            <Download size={14} />
+            Export
+          </button>
           {editable ? (
             <>
               <PublishChecklist readiness={readiness} onFix={fixCheck} />
@@ -1074,6 +1081,9 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
             onDeleted();
           }}
         />
+      ) : null}
+      {exportOpen ? (
+        <FlowExportDialog applicationId={projectId} flow={flow} onClose={() => setExportOpen(false)} />
       ) : null}
     </div>
   );

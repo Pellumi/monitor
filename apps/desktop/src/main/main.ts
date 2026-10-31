@@ -3170,8 +3170,27 @@ function registerIpc(): void {
   ipcMain.handle(IPC.getFlowDiagrams, async (event, input: unknown) => {
     assertTrustedSender(event);
     const value = input as { applicationId?: unknown; flowId?: unknown; versionId?: unknown };
-    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || typeof value.versionId !== 'string') throw new Error('INVALID_FLOW_DIAGRAM_REQUEST');
-    return cloud.flowDiagrams(value.applicationId, value.flowId, value.versionId);
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string' || (value.versionId !== undefined && typeof value.versionId !== 'string')) throw new Error('INVALID_FLOW_DIAGRAM_REQUEST');
+    return cloud.flowDiagrams(value.applicationId, value.flowId, value.versionId as string | undefined);
+  });
+  ipcMain.handle(IPC.saveFlowExport, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { filename?: unknown; contentBase64?: unknown };
+    if (typeof value.filename !== 'string' || typeof value.contentBase64 !== 'string') throw new Error('INVALID_FLOW_EXPORT_REQUEST');
+    const filename = path.basename(value.filename);
+    const extension = path.extname(filename).slice(1).toLowerCase();
+    const allowed = new Set(['svg', 'png', 'pdf', 'mmd', 'md']);
+    if (filename !== value.filename || !allowed.has(extension) || value.contentBase64.length > 40_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
+    const buffer = Buffer.from(value.contentBase64, 'base64');
+    if (!buffer.length || buffer.length > 30_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
+    const save = await dialog.showSaveDialog(mainWindow!, {
+      title: 'Export Flow diagram',
+      defaultPath: path.join(app.getPath('documents'), filename),
+      filters: [{ name: `${extension.toUpperCase()} file`, extensions: [extension] }],
+    });
+    if (save.canceled || !save.filePath) return { cancelled: true };
+    await fs.writeFile(save.filePath, buffer);
+    return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath) };
   });
   ipcMain.handle(IPC.initializeFlow, async (event, input: unknown) => {
     assertTrustedSender(event);

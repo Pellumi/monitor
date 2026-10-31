@@ -1067,10 +1067,12 @@ export class DesktopCloudClient {
   async flowDiagrams(
     applicationId: string,
     flowId: string,
-    versionId: string,
+    versionId?: string,
   ): Promise<Json> {
     return this.request(
-      `/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}/diagrams`,
+      versionId
+        ? `/v1/applications/${applicationId}/flows/${flowId}/versions/${versionId}/diagrams`
+        : `/v1/applications/${applicationId}/flows/${flowId}/diagrams`,
     );
   }
 

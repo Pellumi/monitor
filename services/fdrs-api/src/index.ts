@@ -1122,6 +1122,20 @@ app.get('/v1/applications/:appId/flows/:flowId', async (req: Request, res: Respo
   });
 });
 
+// Export previews should reflect the graph currently visible in the editor,
+// including an unpublished draft. Version-scoped exports remain available for
+// immutable QA/report artifacts.
+app.get('/v1/applications/:appId/flows/:flowId/diagrams', async (req: Request, res: Response) => {
+  const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
+  if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });
+  return res.json({
+    flowId: flow.id,
+    version: flow.version,
+    draftSeq: flow.draftSeq,
+    diagrams: createFlowDiagrams(flow.nodes as any, flow.edges as any),
+  });
+});
+
 app.patch('/v1/applications/:appId/flows/:flowId', async (req: Request, res: Response) => {
   const flow = await loadCanonicalFlow(req.params.appId, req.params.flowId);
   if (!flow) return res.status(404).json({ error: 'FLOW_NOT_FOUND' });

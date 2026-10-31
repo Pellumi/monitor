@@ -934,7 +934,7 @@ export const FlowSuggestionsResponseSchema = z.object({
   meta: FlowSuggestionMetaSchema.optional(),
 }).passthrough();
 export const FlowDiagramSchema = z.object({
-  kind: z.enum(['FLOW', 'SEQUENCE', 'ACTIVITY', 'STATE_MACHINE']),
+  kind: z.enum(['FLOW', 'SEQUENCE', 'USE_CASE', 'ACTIVITY', 'STATE_MACHINE']),
   renderer: z.literal('MERMAID'), rendererVersion: z.string(), source: z.string(),
   semanticNodeIds: z.array(z.string()), semanticEdgeIds: z.array(z.string()),
 });
@@ -1477,6 +1477,7 @@ export const IPC = {
   applyFlowReview: 'tellann:cloud:intent:review:apply',
   declineFlowReview: 'tellann:cloud:intent:review:decline',
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
+  saveFlowExport: 'tellann:flow:export:save',
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
   getFlowInitializationProgress: 'tellann:flow:initialization:progress',

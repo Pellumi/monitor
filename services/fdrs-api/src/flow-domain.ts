@@ -35,7 +35,7 @@ export type FlowValidationResult = {
 };
 
 export type FlowDiagramProjection = {
-  kind: 'FLOW' | 'SEQUENCE' | 'ACTIVITY' | 'STATE_MACHINE';
+  kind: 'FLOW' | 'SEQUENCE' | 'USE_CASE' | 'ACTIVITY' | 'STATE_MACHINE';
   renderer: 'MERMAID';
   rendererVersion: '1.0';
   source: string;
@@ -242,9 +242,50 @@ export function createFlowDiagrams(nodes: FlowNodeInput[], edges: FlowEdgeInput[
   for (const edge of edges) stateLines.push(`  ${mermaidId(edge.fromNodeId)} --> ${mermaidId(edge.toNodeId)}: ${mermaidStateDescription(edge.condition || edge.action || 'next')}`);
   for (const node of nodes.filter((item) => item.role === 'TERMINAL')) stateLines.push(`  ${mermaidId(node.id)} --> [*]`);
 
+  // Mermaid does not have a dedicated UML use-case renderer. This projection
+  // keeps the same semantics in a Mermaid flowchart: declared actors sit
+  // outside the application boundary and connect to action-shaped use cases.
+  // It remains portable to Markdown, SVG, PNG and PDF without a second renderer.
+  const useCaseActors = new Map<string, string>();
+  const actorId = (label: string) => {
+    const existing = useCaseActors.get(label);
+    if (existing) return existing;
+    const id = `actor_${useCaseActors.size + 1}`;
+    useCaseActors.set(label, id);
+    return id;
+  };
+  for (const edge of edges) {
+    const from = byId.get(edge.fromNodeId);
+    actorId(edge.actor || from?.actor || 'User');
+  }
+  if (useCaseActors.size === 0) actorId(nodes.find((node) => node.actor)?.actor || 'User');
+  const useCaseLines = ['flowchart LR'];
+  for (const [label, id] of useCaseActors) useCaseLines.push(`  ${id}["${mermaidText(label)}"]`);
+  useCaseLines.push('  subgraph application["Application"]');
+  edges.forEach((edge, index) => {
+    const from = byId.get(edge.fromNodeId);
+    const to = byId.get(edge.toNodeId);
+    const label = edge.action || (from && to ? `${from.stateName} to ${to.stateName}` : 'Continue');
+    useCaseLines.push(`    use_case_${index + 1}(("${mermaidText(label)}"))`);
+  });
+  if (edges.length === 0) {
+    nodes.forEach((node, index) => useCaseLines.push(`    use_case_${index + 1}(("${mermaidText(node.stateName)}"))`));
+  }
+  useCaseLines.push('  end');
+  if (edges.length > 0) {
+    edges.forEach((edge, index) => {
+      const from = byId.get(edge.fromNodeId);
+      useCaseLines.push(`  ${actorId(edge.actor || from?.actor || 'User')} --- use_case_${index + 1}`);
+    });
+  } else {
+    const fallbackActor = [...useCaseActors.values()][0];
+    nodes.forEach((_node, index) => useCaseLines.push(`  ${fallbackActor} --- use_case_${index + 1}`));
+  }
+
   return [
     projection('FLOW', flowLines.join('\n')),
     projection('SEQUENCE', sequenceLines.join('\n')),
+    projection('USE_CASE', useCaseLines.join('\n')),
     projection('ACTIVITY', activityLines.join('\n')),
     projection('STATE_MACHINE', stateLines.join('\n')),
   ];
