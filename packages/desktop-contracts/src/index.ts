@@ -949,12 +949,23 @@ export const DeclaredFlowRequiresSchema = z.object({
   data: z.array(z.string()).optional(),
 }).passthrough();
 
+export const DeclaredFlowIssueSchema = z.object({
+  code: z.string(), severity: z.string(), message: z.string(), target: z.string().optional(), detail: z.string().optional(),
+}).passthrough();
+
 export const DeclaredFlowDetailSchema = DeclaredFlowSummarySchema.extend({
   workflowType: z.string(),
   states: z.array(DeclaredStateSchema).default([]),
   transitions: z.array(DeclaredTransitionSchema).default([]),
   /** What a run needs before it starts: who must be signed in, where, with what data. */
   requires: DeclaredFlowRequiresSchema.nullable().optional(),
+  aiDraftStatus: z.string().nullable().optional(),
+  aiDraftSourceName: z.string().nullable().optional(),
+  /** What document generation left out or flagged — grounding drops and structural lint issues. */
+  aiDraftIssues: z.object({
+    leftOut: z.array(DeclaredFlowIssueSchema).optional(),
+    structuralIssues: z.array(DeclaredFlowIssueSchema).optional(),
+  }).nullable().optional(),
 });
 
 export const DeclaredSuggestionStateSchema = z.object({
@@ -1542,6 +1553,9 @@ export const IPC = {
   declineFlowReview: 'tellann:cloud:intent:review:decline',
   getFlowDiagrams: 'tellann:cloud:flow:diagrams',
   saveFlowExport: 'tellann:flow:export:save',
+  generateFlowFromDocument: 'tellann:cloud:flow:document:generate',
+  generateFlowsFromDocument: 'tellann:cloud:flow:document:generate-many',
+  getFlowSourceSegments: 'tellann:cloud:flow:document:segments',
   initializeFlow: 'tellann:flow:initialize',
   getFlowInitialization: 'tellann:flow:initialization:get',
   getFlowInitializationProgress: 'tellann:flow:initialization:progress',

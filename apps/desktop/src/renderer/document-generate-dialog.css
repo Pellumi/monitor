@@ -1,0 +1,276 @@
+.document-generate-dialog {
+  display: grid;
+  gap: 14px;
+  width: min(480px, 90vw);
+}
+.document-generate-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.document-generate-header h2 {
+  margin: 0;
+  font-size: 15px;
+}
+.document-generate-drop {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px 16px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: rgb(var(--overlay-rgb) / 0.03);
+  color: var(--text);
+  cursor: pointer;
+}
+.document-generate-drop:hover {
+  border-color: var(--border-strong);
+}
+.document-generate-drop > svg {
+  color: var(--text-muted);
+}
+.document-generate-drop > small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.document-generate-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.document-generate-option input {
+  margin-top: 2px;
+  flex: none;
+}
+.document-generate-progress {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 46%),
+    var(--surface-1);
+}
+.document-generate-progress-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.document-generate-loader {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  place-items: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border-subtle));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--surface-2));
+  color: var(--accent);
+}
+.document-generate-loader svg {
+  animation: document-generate-spin 1.2s linear infinite;
+}
+.document-generate-kicker {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.document-generate-progress h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 14px;
+  line-height: 1.3;
+}
+.document-generate-activity {
+  min-height: 18px;
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.document-generate-progress-track {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(var(--overlay-rgb) / 0.08);
+}
+.document-generate-progress-track span {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  width: 42%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, var(--accent) 24%, var(--accent) 76%, transparent);
+  animation: document-generate-sweep 1.8s var(--ease) infinite;
+}
+.document-generate-file {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid rgb(var(--overlay-rgb) / 0.07);
+  border-radius: var(--radius);
+  background: rgb(var(--overlay-rgb) / 0.035);
+  color: var(--text-muted);
+}
+.document-generate-file svg {
+  flex: none;
+}
+.document-generate-file > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.document-generate-file small {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.document-generate-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.document-generate-steps li {
+  display: grid;
+  grid-template-columns: 15px minmax(0, 1fr);
+  align-items: center;
+  gap: 5px;
+  color: var(--text-faint, var(--text-muted));
+  font-size: 9px;
+  line-height: 1.25;
+}
+.document-generate-steps li[data-state='complete'] {
+  color: var(--success);
+}
+.document-generate-steps li[data-state='active'] {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.document-generate-steps svg {
+  flex: none;
+}
+.document-generate-step-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: 4px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+}
+.document-generate-steps li[data-state='active'] .document-generate-step-dot {
+  border-color: var(--accent);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 16%, transparent);
+  animation: document-generate-pulse 1.6s var(--ease) infinite;
+}
+.document-generate-wait-note {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.document-generate-wait-note span:last-child {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+@keyframes document-generate-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes document-generate-sweep {
+  from { transform: translateX(-105%); }
+  to { transform: translateX(345%); }
+}
+@keyframes document-generate-pulse {
+  50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 4%, transparent); }
+}
+@media (max-width: 520px) {
+  .document-generate-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .document-generate-wait-note {
+    display: grid;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .document-generate-loader svg,
+  .document-generate-progress-track span,
+  .document-generate-steps li[data-state='active'] .document-generate-step-dot {
+    animation: none;
+  }
+  .document-generate-progress-track span {
+    left: 29%;
+  }
+}
+.document-generate-results {
+  display: grid;
+  gap: 10px;
+}
+.document-generate-result-list {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 320px;
+  overflow: auto;
+}
+.document-generate-result-list .flow-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.document-generate-result-list .flow-card span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+}
+.document-generate-result-list .flow-card small {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.document-generate-result-list svg.is-success {
+  flex: none;
+  color: var(--success);
+}
+.document-generate-result-list svg.is-warning {
+  flex: none;
+  color: var(--warning);
+}
+.document-generate-result-list .flow-card button {
+  flex: none;
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.document-generate-result-list .flow-card button:hover {
+  border-color: var(--border-strong);
+}

@@ -634,6 +634,136 @@ export function SuggestionsPanel({
   );
 }
 
+/**
+ * What document generation left out or flagged, and how much of the graph is grounded —
+ * shown right under the draft banner, since that's the moment a reviewer is looking at a
+ * freshly generated draft and deciding whether to trust it. Each left-out/flagged entry
+ * jumps straight to the state or transition it's about.
+ */
+export function DocumentGroundingBanner({
+  flow,
+  onFocusState,
+  onFocusTransition,
+}: {
+  flow: FlowDetail;
+  onFocusState(stateId: string): void;
+  onFocusTransition(transitionId: string): void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const leftOut = flow.aiDraftIssues?.leftOut ?? [];
+  const structuralIssues = flow.aiDraftIssues?.structuralIssues ?? [];
+  const issueCount = leftOut.length + structuralIssues.length;
+
+  // "Grounded" = carries evidenceIds pointing back to the source document. Not literally
+  // "% of the document covered" (the document's total segment count isn't known here) —
+  // it's how much of what IS in the graph is tied to a citation.
+  const groundableCount = flow.states.length + flow.transitions.length;
+  const groundedCount =
+    flow.states.filter((state) => ((state as { evidenceIds?: string[] }).evidenceIds?.length ?? 0) > 0).length +
+    flow.transitions.filter((transition) => ((transition as { evidenceIds?: string[] }).evidenceIds?.length ?? 0) > 0).length;
+  const hasGroundingData = groundedCount > 0;
+
+  if (!issueCount && !hasGroundingData) return null;
+
+  const jumpToTarget = (target?: string) => {
+    if (!target) return;
+    if (target.includes('→')) {
+      const [fromName, toName] = target.split('→').map((part) => part.trim());
+      const from = flow.states.find((s) => s.stateName === fromName);
+      const to = flow.states.find((s) => s.stateName === toName);
+      const transition = flow.transitions.find((t) => t.fromStateId === from?.id && t.toStateId === to?.id);
+      if (transition) onFocusTransition(transition.id);
+      return;
+    }
+    const state = flow.states.find((s) => s.stateName === target);
+    if (state) onFocusState(state.id);
+  };
+
+  return (
+    <div className="infobar flow-grounding-banner" data-tone={issueCount ? 'warning' : undefined}>
+      <button type="button" className="flow-grounding-summary" onClick={() => setExpanded((v) => !v)}>
+        {hasGroundingData ? (
+          <span className="flow-grounding-coverage">
+            {groundedCount}/{groundableCount} grounded in the source document
+          </span>
+        ) : null}
+        {issueCount > 0 ? (
+          <span className="flow-grounding-issue-count">{issueCount} left out or flagged</span>
+        ) : null}
+        <ChevronRight size={14} className={expanded ? 'flow-grounding-chevron is-open' : 'flow-grounding-chevron'} />
+      </button>
+      {expanded ? (
+        <ul className="flow-grounding-list">
+          {leftOut.map((issue, index) => (
+            <li key={`left-out-${index}`}>
+              <button type="button" disabled={!issue.target} onClick={() => jumpToTarget(issue.target)}>
+                {issue.message}
+              </button>
+            </li>
+          ))}
+          {structuralIssues.map((issue, index) => (
+            <li key={`structural-${index}`}>
+              <button type="button" disabled={!issue.target} onClick={() => jumpToTarget(issue.target)}>
+                {issue.message}
+              </button>
+            </li>
+          ))}
+          {!issueCount ? <li className="flow-grounding-clean">Nothing was left out or flagged.</li> : null}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * The document text Tellann read when this flow was generated, so a reviewer can check
+ * the graph against the source without re-opening the original file. The segment(s) the
+ * selected state or transition cites are highlighted.
+ */
+export function SourcePanel({
+  sourceName,
+  segments,
+  loading,
+  selectedEvidenceIds,
+}: {
+  sourceName: string | null;
+  segments: Array<{ id: string; sourceLabel: string | null; excerpt: string; locator: string }>;
+  loading: boolean;
+  selectedEvidenceIds: string[];
+}) {
+  return (
+    <section className="flow-section">
+      <h3 className="flow-section-title">Source document</h3>
+      <p className="flow-section-hint">
+        The text Tellann read from {sourceName ?? 'the source document'} when this flow was
+        generated. Select a state or transition to highlight the segment(s) its declaration
+        was drawn from.
+      </p>
+      {loading ? (
+        <p className="flow-section-hint">Loading…</p>
+      ) : !segments.length ? (
+        <p className="flow-section-hint">
+          No source text is available for this flow — either it was not generated from a
+          document, or the document could not be read as text.
+        </p>
+      ) : (
+        <ul className="flow-source-segments">
+          {segments.map((segment) => (
+            <li
+              key={segment.id}
+              className="flow-card"
+              data-selected={selectedEvidenceIds.includes(segment.id) ? true : undefined}
+            >
+              {segment.sourceLabel ? <strong>{segment.sourceLabel}</strong> : null}
+              <p>{segment.excerpt}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return '';

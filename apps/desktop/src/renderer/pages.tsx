@@ -11,6 +11,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type CSSProperties,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity,
   AlertTriangle,
@@ -24,6 +25,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CirclePause,
+  CircleCheck,
   CircleStop,
   Code2,
   Copy,
@@ -146,6 +148,7 @@ import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomated
 import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, isLoopbackApplicationUrl, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
+import { DocumentGenerateDialog } from "./document-generate-dialog";
 import { transitionDeclarationSummary } from "@tellann/flow-layout";
 import {
   flowBindingForEnvironment,
@@ -4997,11 +5000,16 @@ export function IntentPage() {
   const [documents, setDocuments] = useState<SourceDocumentSummary[]>([]);
   const [importView, setImportView] = useState<DocumentImportView | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [deletedFlowNotice, setDeletedFlowNotice] = useState<string | null>(null);
   const [activeDraftJobs, setActiveDraftJobs] = useState<IntentDraftJob[]>([]);
   const [cancellingDraftJobId, setCancellingDraftJobId] = useState<
     string | null
   >(null);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
+  // A separate, simpler path from the evidence-library import above: one document, sent
+  // straight to Tellann's model (services/onboarding-api generate-flow/generate-flows),
+  // producing one or more draft flows directly — no evidence processing step.
+  const [quickGenerateOpen, setQuickGenerateOpen] = useState(false);
   const [selectedReadyVersionIds, setSelectedReadyVersionIds] = useState<
     Set<string>
   >(() => new Set());
@@ -5251,7 +5259,7 @@ export function IntentPage() {
     await deleteDeclaredFlow(activeProjectId, deleted.id);
     setFlows((current) => current.filter((flow) => flow.id !== deleted.id));
     setFlowToDelete(null);
-    setActionMessage(`“${deleted.name}” was deleted.`);
+    setDeletedFlowNotice(deleted.name);
     await refresh().catch(() => undefined);
   };
 
@@ -5545,16 +5553,20 @@ export function IntentPage() {
             </div>
           </section>
           <section className="content-card ai-intent-actions">
-            <div>
-              <h2>Generate flows from your documents</h2>
+            <div className="ai-intent-actions-copy">
+              <h2>Generate from documents</h2>
               <p>
-                Tellann creates a review draft first. Nothing changes graph
-                truth until you accept it.
+                Create a reviewable flow draft from your product documentation.
+                You&apos;ll approve it before it changes your expected flow.
               </p>
             </div>
-            <div className="review-actions">
+            <div
+              className="ai-intent-action-list"
+              role="group"
+              aria-label="Document generation options"
+            >
               <button
-                className="button primary"
+                className="button ai-intent-action-card is-primary"
                 disabled={busy || importActive}
                 title={
                   importActive
@@ -5563,11 +5575,20 @@ export function IntentPage() {
                 }
                 onClick={() => void uploadAndGenerate()}
               >
-                <FileSearch size={15} /> Upload and generate
+                <span className="ai-intent-action-heading">
+                  <FileSearch size={16} aria-hidden="true" />
+                  <span className="ai-intent-action-title">Upload new documents</span>
+                  <span className="ai-intent-action-badge">Recommended</span>
+                </span>
+                <span className="ai-intent-action-description">
+                  {importActive
+                    ? "Finish the current import before starting another."
+                    : "Process evidence and generate a grounded draft."}
+                </span>
               </button>
-              {versionedDocuments.length ? (
+              {readyDocumentCount > 0 ? (
                 <button
-                  className="button"
+                  className="button ai-intent-action-card"
                   disabled={busy || importActive}
                   title={
                     importActive
@@ -5576,11 +5597,44 @@ export function IntentPage() {
                   }
                   onClick={openReadyDocumentPicker}
                 >
-                  <Workflow size={15} /> Generate from ready documents
+                  <span className="ai-intent-action-heading">
+                    <Workflow size={16} aria-hidden="true" />
+                    <span className="ai-intent-action-title">Use ready documents</span>
+                    <span className="ai-intent-ready-count">
+                      {readyDocumentCount} available
+                    </span>
+                  </span>
+                  <span className="ai-intent-action-description">
+                    Generate from documents Tellann has already processed.
+                  </span>
                 </button>
               ) : null}
+              <button
+                className="button ai-intent-action-card is-alternative"
+                disabled={busy}
+                onClick={() => setQuickGenerateOpen(true)}
+              >
+                <span className="ai-intent-action-heading">
+                  <Sparkles size={16} aria-hidden="true" />
+                  <span className="ai-intent-action-title">Create a quick draft</span>
+                </span>
+                <span className="ai-intent-action-description">
+                  Use one file without evidence processing. Faster, but less grounded.
+                </span>
+              </button>
             </div>
           </section>
+          {quickGenerateOpen ? (
+            <DocumentGenerateDialog
+              projectId={activeProjectId}
+              onClose={() => setQuickGenerateOpen(false)}
+              onOpenFlow={(flowId) => {
+                setQuickGenerateOpen(false);
+                void refresh();
+                navigate(`/applications/${activeProjectId}/intent/flows/${flowId}`);
+              }}
+            />
+          ) : null}
           {actionMessage ? (
             <div className="context-banner" role="status">
               <span>{actionMessage}</span>
@@ -5962,6 +6016,27 @@ export function IntentPage() {
                 ? `${readyDocumentCount} document(s) are ready for flow generation.`
                 : "Your documents are queued or processing. Open Sources for detailed status."}
             </div>
+          ) : null}
+          {deletedFlowNotice ? createPortal(
+            <div className="notification-toaster" role="region" aria-label="Flow notifications">
+              <div className="notification-toast severity-success" role="status" aria-live="polite" aria-atomic="true">
+                <CircleCheck size={16} aria-hidden="true" />
+                <div className="notification-toast-body">
+                  <strong>Flow deleted</strong>
+                  <span>“{deletedFlowNotice}” was deleted.</span>
+                </div>
+                <button
+                  type="button"
+                  className="notification-toast-close"
+                  aria-label="Dismiss deletion notification"
+                  title="Dismiss"
+                  onClick={() => setDeletedFlowNotice(null)}
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            </div>,
+            document.body,
           ) : null}
         </div>
       )}

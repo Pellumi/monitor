@@ -35,6 +35,7 @@ import {
 } from '@tellann/flow-layout';
 import {
   Activity,
+  BookOpen,
   ChevronDown,
   CircleAlert,
   CircleCheck,
@@ -67,10 +68,12 @@ import {
   AddStateForm,
   AddTransitionForm,
   DeleteFlowDialog,
+  DocumentGroundingBanner,
   HistoryPanel,
   SelectedStateEditor,
   SelectedTransitionEditor,
   SettingsPanel,
+  SourcePanel,
   StateList,
   StatusPill,
   STATE_CATEGORIES,
@@ -92,7 +95,7 @@ import {
 } from './use-flow-editor';
 import './flow-editor.css';
 
-type PanelTab = 'build' | 'suggestions' | 'history' | 'settings';
+type PanelTab = 'build' | 'suggestions' | 'source' | 'history' | 'settings';
 type Selection = { kind: 'state' | 'transition'; id: string } | null;
 type Placement = { left: number; top: number; position: { x: number; y: number } };
 type Layout = Record<string, { x: number; y: number }>;
@@ -257,9 +260,35 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+  const [sourceSegments, setSourceSegments] = useState<{ sourceName: string | null; segments: Array<{ id: string; sourceLabel: string | null; excerpt: string; locator: string }> }>({ sourceName: null, segments: [] });
+  const [sourceSegmentsLoading, setSourceSegmentsLoading] = useState(false);
 
   const editable = flowIsEditable(flow);
   const proposed = (flow as { aiDraftStatus?: string | null } | null)?.aiDraftStatus === 'PENDING_REVIEW';
+  const documentSourceName = (flow as { aiDraftSourceName?: string | null } | null)?.aiDraftSourceName;
+
+  // The document text a flow was generated from, for the Source tab and the grounding
+  // banner's "jump to segment" highlighting — only loaded for a flow that has
+  // aiDraftSourceName at all; most flows were never generated from a document.
+  useEffect(() => {
+    if (!projectId || !flowId || !documentSourceName) {
+      setSourceSegments({ sourceName: null, segments: [] });
+      return;
+    }
+    let cancelled = false;
+    setSourceSegmentsLoading(true);
+    void window.tellann?.intent.getFlowSourceSegments(projectId, flowId)
+      .then((result) => {
+        if (!cancelled) setSourceSegments(result);
+      })
+      .catch(() => {
+        if (!cancelled) setSourceSegments({ sourceName: null, segments: [] });
+      })
+      .finally(() => {
+        if (!cancelled) setSourceSegmentsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [projectId, flowId, documentSourceName]);
 
   // Publishing a Flow does not bind it to the attached project — Instrumentation
   // does that, and it needs the Flow's context in the URL to offer the analysis
@@ -821,6 +850,17 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
           </div>
         ) : null}
 
+        {flow ? (
+          <DocumentGroundingBanner
+            flow={flow}
+            onFocusState={(stateId) => focusState(stateId)}
+            onFocusTransition={(transitionId) => {
+              setSelection({ kind: 'transition', id: transitionId });
+              setTab('build');
+            }}
+          />
+        ) : null}
+
         <div className="flow-editor-main">
           <div
             className="flow-canvas"
@@ -946,6 +986,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
               {([
                 { id: 'build', label: 'Build', icon: Workflow },
                 { id: 'suggestions', label: 'Suggestions', icon: Activity },
+                ...(documentSourceName ? [{ id: 'source', label: 'Source', icon: BookOpen }] as const : []),
                 { id: 'history', label: 'History', icon: History },
                 { id: 'settings', label: 'Settings', icon: Settings2 },
               ] as const).map((item) => (
@@ -1045,6 +1086,19 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                     apply: () => void editor.review.apply(),
                     decline: () => void editor.review.decline(),
                   }}
+                />
+              ) : null}
+
+              {tab === 'source' ? (
+                <SourcePanel
+                  sourceName={sourceSegments.sourceName ?? documentSourceName ?? null}
+                  segments={sourceSegments.segments}
+                  loading={sourceSegmentsLoading}
+                  selectedEvidenceIds={
+                    (selectedState as { evidenceIds?: string[] } | null)?.evidenceIds ??
+                    (selectedTransition as { evidenceIds?: string[] } | null)?.evidenceIds ??
+                    []
+                  }
                 />
               ) : null}
 

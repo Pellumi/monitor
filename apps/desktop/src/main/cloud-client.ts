@@ -1076,6 +1076,35 @@ export class DesktopCloudClient {
     );
   }
 
+  /** One uploaded document → one draft declared flow pending review. See onboarding-api's `generate-flow`. */
+  async generateFlowFromDocument(
+    applicationId: string,
+    input: { filename: string; mimeType: string; dataBase64: string; skipConsistencyCheck?: boolean },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/source-documents/generate-flow`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  /** Decomposes the document into its journeys first, generating one draft flow per journey. See `generate-flows`. */
+  async generateFlowsFromDocument(
+    applicationId: string,
+    input: { filename: string; mimeType: string; dataBase64: string; skipConsistencyCheck?: boolean; maxJourneys?: number },
+  ): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/source-documents/generate-flows`,
+      { method: "POST", body: JSON.stringify(input) },
+    );
+  }
+
+  /** The document text a flow was generated from, for a review split-view. Empty segments for a flow never generated from a document. */
+  async flowSourceSegments(applicationId: string, flowId: string): Promise<Json> {
+    return this.request<Json>(
+      `/applications/${applicationId}/declared-flow/${flowId}/source-segments`,
+    );
+  }
+
   /**
    * The published graph snapshot a run reconciles against. Read by version
    * rather than through the canonical flow endpoint, because the draft graph

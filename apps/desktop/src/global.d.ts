@@ -218,6 +218,27 @@ declare global {
         declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
         getFlowDiagrams(applicationId: string, flowId: string, versionId?: string): Promise<Record<string, unknown>>;
         saveFlowExport(filename: string, contentBase64: string, options?: { render: 'png' | 'pdf'; title: string; subtitle: string }): Promise<{ cancelled: boolean; filePath?: string; filename?: string }>;
+        /** A single uploaded document → one draft declared flow pending review. See services/onboarding-api/src/document-routes.ts `generate-flow`. */
+        generateFlowFromDocument(applicationId: string, input: { filename: string; mimeType: string; dataBase64: string; skipConsistencyCheck?: boolean }): Promise<{
+          flowId: string; name: string; sourceName: string; stateCount: number; transitionCount: number;
+          provider: string; model: string; repairedOrdering: boolean;
+          leftOut: Array<{ code: string; severity: string; message: string; target?: string }>;
+          structuralIssues: Array<{ code: string; severity: string; message: string; target?: string }>;
+          meta: { providerCalls: number; generationMs: number; skipConsistencyCheck: boolean };
+        }>;
+        /** Decomposes the document into its distinct journeys first, generating one draft flow per journey. See `generate-flows`. */
+        generateFlowsFromDocument(applicationId: string, input: { filename: string; mimeType: string; dataBase64: string; skipConsistencyCheck?: boolean; maxJourneys?: number }): Promise<{
+          sourceName: string; journeyCount: number;
+          flows: Array<{ flowId: string; name: string; stateCount: number; transitionCount: number; providerCalls: number; generationMs: number; repairedOrdering: boolean }>;
+          failed: Array<{ journey: string; reason: string }>;
+          skippedJourneys?: string[];
+          meta: { decomposeMs: number; totalMs: number; totalProviderCalls: number; skipConsistencyCheck: boolean; maxJourneys: number };
+        }>;
+        /** The document text Tellann read when a flow was generated from it, for a review split-view. */
+        getFlowSourceSegments(applicationId: string, flowId: string): Promise<{
+          sourceName: string | null;
+          segments: Array<{ id: string; sourceLabel: string | null; excerpt: string; locator: string }>;
+        }>;
         initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
         getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
         getFlowInitializationProgress(initializationId: string): Promise<Record<string, any>>;

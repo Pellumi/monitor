@@ -3183,7 +3183,7 @@ function registerIpc(): void {
     if (typeof value.filename !== 'string' || typeof value.contentBase64 !== 'string') throw new Error('INVALID_FLOW_EXPORT_REQUEST');
     const filename = path.basename(value.filename);
     const extension = path.extname(filename).slice(1).toLowerCase();
-    const allowed = new Set(['svg', 'png', 'pdf', 'mmd', 'md']);
+    const allowed = new Set(['svg', 'png', 'pdf', 'mmd', 'md', 'json']);
     if (filename !== value.filename || !allowed.has(extension) || value.contentBase64.length > 40_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
     let buffer: Buffer<ArrayBufferLike> = Buffer.from(value.contentBase64, 'base64');
     if (!buffer.length || buffer.length > 30_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
@@ -3241,6 +3241,36 @@ function registerIpc(): void {
     }
     await fs.writeFile(save.filePath, buffer);
     return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath) };
+  });
+  function parseDocumentGenerationInput(raw: unknown): { filename: string; mimeType: string; dataBase64: string; skipConsistencyCheck?: boolean; maxJourneys?: number } {
+    const value = raw as { filename?: unknown; mimeType?: unknown; dataBase64?: unknown; skipConsistencyCheck?: unknown; maxJourneys?: unknown };
+    if (typeof value.filename !== 'string' || !value.filename.trim() || typeof value.mimeType !== 'string' || typeof value.dataBase64 !== 'string' || !value.dataBase64) {
+      throw new Error('INVALID_DOCUMENT_PAYLOAD');
+    }
+    if (value.dataBase64.length > 25_000_000) throw new Error('DOCUMENT_TOO_LARGE');
+    return {
+      filename: value.filename, mimeType: value.mimeType, dataBase64: value.dataBase64,
+      ...(typeof value.skipConsistencyCheck === 'boolean' ? { skipConsistencyCheck: value.skipConsistencyCheck } : {}),
+      ...(typeof value.maxJourneys === 'number' && Number.isInteger(value.maxJourneys) && value.maxJourneys > 0 ? { maxJourneys: value.maxJourneys } : {}),
+    };
+  }
+  ipcMain.handle(IPC.generateFlowFromDocument, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; input?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_DOCUMENT_PAYLOAD');
+    return cloud.generateFlowFromDocument(value.applicationId, parseDocumentGenerationInput(value.input));
+  });
+  ipcMain.handle(IPC.generateFlowsFromDocument, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; input?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_DOCUMENT_PAYLOAD');
+    return cloud.generateFlowsFromDocument(value.applicationId, parseDocumentGenerationInput(value.input));
+  });
+  ipcMain.handle(IPC.getFlowSourceSegments, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = input as { applicationId?: unknown; flowId?: unknown };
+    if (typeof value.applicationId !== 'string' || typeof value.flowId !== 'string') throw new Error('INVALID_FLOW_REQUEST');
+    return cloud.flowSourceSegments(value.applicationId, value.flowId);
   });
   ipcMain.handle(IPC.initializeFlow, async (event, input: unknown) => {
     assertTrustedSender(event);
