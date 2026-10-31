@@ -896,6 +896,28 @@
   gap: 6px;
   min-width: 0;
 }
+.flow-review-resolution {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border-subtle));
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-1));
+}
+.flow-review-resolution > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+.flow-review-resolution strong {
+  color: var(--text-strong);
+  font-size: 12.5px;
+}
+.flow-review-resolution > .button.primary {
+  justify-self: start;
+}
+.flow-review-navigation .button {
+  flex: 1;
+}
 
 /* Declarations: rows of inputs and effects, and the environment checkboxes. */
 .flow-rows { display: grid; gap: 6px; }

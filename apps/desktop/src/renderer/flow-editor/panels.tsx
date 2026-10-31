@@ -415,6 +415,8 @@ function suggestionSource(source: string | undefined) {
 export function SuggestionsPanel({
   editable,
   stateCount,
+  states,
+  sourceAvailable,
   suggestions,
   meta,
   loading,
@@ -422,10 +424,14 @@ export function SuggestionsPanel({
   unappliableIds,
   onRefresh,
   onAct,
+  onReviewFlow,
+  onReviewSource,
   review,
 }: {
   editable: boolean;
   stateCount: number;
+  states: FlowState[];
+  sourceAvailable: boolean;
   suggestions: DeclaredStateSuggestion[];
   meta: FlowSuggestionMeta | null;
   loading: boolean;
@@ -433,6 +439,8 @@ export function SuggestionsPanel({
   unappliableIds: Set<string>;
   onRefresh(): void;
   onAct(suggestionId: string, action: 'accept' | 'reject' | 'dismiss'): void;
+  onReviewFlow(): void;
+  onReviewSource(): void;
   review: {
     suggestions: DeclaredStateSuggestion[];
     meta: FlowSuggestionMeta | null;
@@ -441,13 +449,26 @@ export function SuggestionsPanel({
     loading: boolean;
     previewLoading: boolean;
     applying: boolean;
+    resolvingInitial: boolean;
     notice: string | null;
     request(): void;
     toggle(suggestionId: string): void;
     apply(): void;
     decline(): void;
+    resolveInitialState(stateId: string): void;
   };
 }) {
+  const initialStateIssue = review.preview?.validation.issues.find((issue) => issue.code === 'FLOW_INITIAL_STATE_COUNT');
+  const reviewBusy = review.applying || review.resolvingInitial;
+  const [initialStateId, setInitialStateId] = useState('');
+  useEffect(() => {
+    if (!initialStateIssue) {
+      setInitialStateId('');
+      return;
+    }
+    setInitialStateId((current) => states.some((state) => state.id === current) ? current : '');
+  }, [initialStateIssue, states]);
+
   const planNote = meta?.mode === 'RULE_ONLY' && !meta.aiAllowed
     ? 'Rule-guided. Local and Solo plans add AI analysis.'
     : meta?.mode === 'RULE_FALLBACK'
@@ -544,7 +565,7 @@ export function SuggestionsPanel({
           <button
             className="button"
             type="button"
-            disabled={!editable || reviewBlocked || review.loading || review.applying}
+            disabled={!editable || reviewBlocked || review.loading || reviewBusy}
             onClick={review.request}
           >
             {/* <Sparkles size={14} className={review.loading ? 'spin' : undefined} /> */}
@@ -565,7 +586,7 @@ export function SuggestionsPanel({
                   <input
                     type="checkbox"
                     checked={review.selectedIds.has(suggestion.id)}
-                    disabled={review.applying}
+                    disabled={reviewBusy}
                     onChange={() => review.toggle(suggestion.id)}
                   />
                   <span>
@@ -608,6 +629,45 @@ export function SuggestionsPanel({
                 ))}
               </ul>
             ) : null}
+            {initialStateIssue ? (
+              <div className="flow-review-resolution" role="group" aria-labelledby="flow-initial-resolution-title">
+                <div>
+                  <strong id="flow-initial-resolution-title">Choose the starting state</strong>
+                  <p>
+                    Review the current flow and its source first, then choose the first state a user encounters. Tellann will mark it as the only initial state and recheck these proposals.
+                  </p>
+                </div>
+                <div className="flow-actions flow-review-navigation">
+                  <button className="button" type="button" disabled={reviewBusy} onClick={onReviewFlow}>
+                    Review current flow
+                  </button>
+                  {sourceAvailable ? (
+                    <button className="button" type="button" disabled={reviewBusy} onClick={onReviewSource}>
+                      Review source
+                    </button>
+                  ) : null}
+                </div>
+                <label className="flow-field">
+                  Starting state
+                  <SelectField
+                    value={initialStateId}
+                    onValueChange={setInitialStateId}
+                    options={states.map((state) => ({ value: state.id, label: state.stateName }))}
+                    placeholder="Choose the first state…"
+                    ariaLabel="Starting state"
+                    disabled={reviewBusy}
+                  />
+                </label>
+                <button
+                  className="button primary"
+                  type="button"
+                  disabled={!initialStateId || reviewBusy}
+                  onClick={() => review.resolveInitialState(initialStateId)}
+                >
+                  {review.resolvingInitial ? 'Rechecking…' : 'Set as initial and recheck'}
+                </button>
+              </div>
+            ) : null}
             <p className="flow-status-line" data-tone="warning">
               <Sparkles size={13} aria-hidden="true" />
               Shown on the canvas in yellow until you apply them.
@@ -619,12 +679,13 @@ export function SuggestionsPanel({
             <button
               className="button primary"
               type="button"
-              disabled={!review.selectedIds.size || review.previewLoading || review.applying || !review.preview?.validation.valid}
+              disabled={!review.selectedIds.size || review.previewLoading || reviewBusy || !review.preview?.validation.valid}
+              title={!review.preview?.validation.valid ? review.preview?.validation.issues[0]?.message : undefined}
               onClick={review.apply}
             >
               {review.applying ? 'Applying…' : `Apply selected (${review.selectedIds.size})`}
             </button>
-            <button className="button" type="button" disabled={review.applying} onClick={review.decline}>
+            <button className="button" type="button" disabled={reviewBusy} onClick={review.decline}>
               Decline
             </button>
           </div>

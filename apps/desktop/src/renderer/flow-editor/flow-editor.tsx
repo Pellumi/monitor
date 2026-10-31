@@ -1073,6 +1073,8 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                 <SuggestionsPanel
                   editable={editable}
                   stateCount={flow.states.length}
+                  states={flow.states}
+                  sourceAvailable={Boolean(documentSourceName)}
                   suggestions={editor.suggestions}
                   meta={editor.suggestionMeta}
                   loading={editor.suggestionsLoading}
@@ -1080,11 +1082,21 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                   unappliableIds={editor.unappliableIds}
                   onRefresh={editor.refreshSuggestions}
                   onAct={(id, action) => void editor.actOnSuggestion(id, action)}
+                  onReviewFlow={() => {
+                    setSelection(null);
+                    setTab('build');
+                    fitView();
+                  }}
+                  onReviewSource={() => setTab('source')}
                   review={{
                     ...editor.review,
                     request: () => void editor.review.request(),
                     apply: () => void editor.review.apply(),
                     decline: () => void editor.review.decline(),
+                    resolveInitialState: (stateId) => {
+                      const state = flow.states.find((item) => item.id === stateId);
+                      if (state) void editor.review.resolveInitialState(state);
+                    },
                   }}
                 />
               ) : null}
