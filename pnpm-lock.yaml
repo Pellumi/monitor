@@ -153,9 +153,6 @@ importers:
       electron-updater:
         specifier: ^6.6.2
         version: 6.8.9
-      jspdf:
-        specifier: ^4.2.1
-        version: 4.2.1
       lucide-react:
         specifier: ^1.18.0
         version: 1.18.0(react@19.2.4)
@@ -1427,6 +1424,9 @@ importers:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../../packages/desktop-contracts
+      '@tellann/document-intelligence':
+        specifier: workspace:*
+        version: link:../../packages/document-intelligence
       '@tellann/email':
         specifier: workspace:*
         version: link:../../packages/email

@@ -137,6 +137,14 @@ enum SuggestionType {
   RECOVERY_PATH
   SECURITY_STATE
   BUSINESS_RULE
+  // A step the source document describes that has no state/transition in the flow at all.
+  MISSING_DOCUMENTED_STEP
+  // A detail document-generation left out (no text to check it against at the time) that
+  // can now be verified and re-attached. See DeclaredStateSuggestion.restoreDeclarationJson.
+  RESTORE_DECLARATION
+  // Two or more transitions leave the same state toward different destinations with no
+  // `condition` distinguishing them.
+  AMBIGUOUS_BRANCH
 }
 
 enum SuggestionSource {
@@ -1932,6 +1940,11 @@ model BehaviorGraph {
   // document) is awaiting the author's accept/discard decision. Cleared on accept.
   aiDraftStatus      String?
   aiDraftSourceName  String?
+  // What document generation left out or flagged, kept for review: FlowLanguageIssue[]
+  // from grounding (a cited state/transition/detail the source document did not
+  // support) and from the structural lint (no initial state, an unreachable state...).
+  // Cleared on accept/discard along with the other aiDraft* fields.
+  aiDraftIssues      Json?
   // What a run needs before it starts: { actor?, environments[], data[] }.
   // Read by the automated-run preflight; never by the flow's own validation.
   requires           Json?
@@ -2044,6 +2057,11 @@ model DeclaredStateSuggestion {
   suggestedStatesJson      Json?
   suggestedTransitionsJson Json?
   evidenceJson             Json?
+  // RESTORE_DECLARATION only: { targetKind: 'STATE'|'TRANSITION', target, detail, code }
+  // — what to re-attach and to what. No new state/transition is proposed, so this
+  // suggestion has empty suggestedStates/suggestedTransitionsJson; accept applies this
+  // instead. See packages/ai/src/flow-suggestions/restore-declarations.ts.
+  restoreDeclarationJson   Json?
   source                   SuggestionSource   @default(RULE_ENGINE)
   confidence               Float
   status                   String             @default("PENDING")

@@ -879,6 +879,32 @@ export const DeclaredFlowSummarySchema = z.object({
   versions: z.array(z.object({ id: z.string().uuid(), version: z.number().int(), isBaseline: z.boolean().optional() })).optional(),
 }).passthrough();
 
+// What a person (or document generation) declares beyond "this state, then that one" —
+// mirrors packages/ai/src/flow-spec.ts's shapes. Duplicated rather than imported: this
+// package is a dependency-free leaf both the desktop app and services pull in, and those
+// shapes are read-only data here, not re-validated input.
+export const DeclaredRecognizerSchema = z.object({
+  routes: z.array(z.string()).optional(),
+  headings: z.array(z.string()).optional(),
+  texts: z.array(z.string()).optional(),
+}).passthrough();
+export const DeclaredControlSchema = z.object({
+  role: z.string().optional(),
+  label: z.string(),
+  testId: z.string().optional(),
+}).passthrough();
+export const DeclaredInputSchema = z.object({
+  name: z.string(),
+  label: z.string().optional(),
+  dataKey: z.string(),
+  role: z.enum(['PROTECTED', 'PROVIDED', 'GENERATED']),
+}).passthrough();
+export const DeclaredEffectSchema = z.object({
+  method: z.string(),
+  route: z.string(),
+  status: z.number().int().optional(),
+}).passthrough();
+
 export const DeclaredStateSchema = z.object({
   id: z.string().uuid(),
   stateName: z.string(),
@@ -887,6 +913,14 @@ export const DeclaredStateSchema = z.object({
   role: z.enum(['NORMAL', 'INITIAL', 'TERMINAL']).default('NORMAL'),
   terminalKind: z.enum(['SUCCESS', 'FAILURE', 'CANCELLATION', 'ALTERNATE']).nullable().optional(),
   canonicalBehavior: z.string().nullable().optional(),
+  description: z.string().nullable().optional(),
+  actor: z.string().nullable().optional(),
+  /** How to tell a user is in this state — declared, so it outranks code-derived evidence. */
+  recognizer: DeclaredRecognizerSchema.nullable().optional(),
+  /** Another flow this state stands for in full; expanded into the snapshot at publish. */
+  subFlowId: z.string().uuid().nullable().optional(),
+  /** IntentEvidence row ids this state's declaration was drawn from, if any. */
+  evidenceIds: z.array(z.string()).optional(),
 }).passthrough();
 
 export const DeclaredTransitionSchema = z.object({
@@ -898,12 +932,29 @@ export const DeclaredTransitionSchema = z.object({
   provenance: z.string(),
   fromState: DeclaredStateSchema.optional(),
   toState: DeclaredStateSchema.optional(),
+  /** What the user operates to do it. */
+  control: DeclaredControlSchema.nullable().optional(),
+  /** What goes in, and where each value comes from. */
+  expectedInput: z.array(DeclaredInputSchema).nullable().optional(),
+  /** What the application does in response, confirmed by a run. */
+  expectedOutput: z.array(DeclaredEffectSchema).nullable().optional(),
+  mode: z.enum(['AUTO', 'CONFIRM', 'MANUAL']).optional(),
+  /** IntentEvidence row ids this transition's declaration was drawn from, if any. */
+  evidenceIds: z.array(z.string()).optional(),
+}).passthrough();
+
+export const DeclaredFlowRequiresSchema = z.object({
+  actor: z.string().optional(),
+  environments: z.array(z.enum(['DEVELOPMENT', 'STAGING', 'PRODUCTION'])).optional(),
+  data: z.array(z.string()).optional(),
 }).passthrough();
 
 export const DeclaredFlowDetailSchema = DeclaredFlowSummarySchema.extend({
   workflowType: z.string(),
   states: z.array(DeclaredStateSchema).default([]),
   transitions: z.array(DeclaredTransitionSchema).default([]),
+  /** What a run needs before it starts: who must be signed in, where, with what data. */
+  requires: DeclaredFlowRequiresSchema.nullable().optional(),
 });
 
 export const DeclaredSuggestionStateSchema = z.object({
@@ -913,6 +964,16 @@ export const DeclaredSuggestionStateSchema = z.object({
 export const DeclaredSuggestionTransitionSchema = z.object({
   from: z.string(), to: z.string(), action: z.string().nullable().optional(),
 });
+/** RESTORE_DECLARATION only — what to re-attach and to what, once accepted. See packages/ai/src/flow-suggestions/restore-declarations.ts. */
+export const DeclaredRestoreDeclarationSchema = z.object({
+  targetKind: z.enum(['STATE', 'TRANSITION', 'FLOW']),
+  target: z.string(),
+  detail: z.string(),
+  code: z.string(),
+  field: z.enum(['route', 'heading', 'text', 'control', 'input', 'effect', 'environment', 'actor']).optional(),
+  value: z.unknown().optional(),
+});
+
 export const DeclaredStateSuggestionSchema = z.object({
   id: z.string().uuid(), suggestedStateName: z.string(), category: z.string(), rationale: z.string(),
   title: z.string().nullable().optional(), description: z.string().nullable().optional(),
@@ -920,8 +981,11 @@ export const DeclaredStateSuggestionSchema = z.object({
   confidence: z.number().min(0).max(1), severity: z.string(), status: z.string(),
   graphVersion: z.number().int().nullable().optional(), graphHash: z.string().nullable().optional(),
   reviewId: z.string().uuid().nullable().optional(),
+  /** As persisted: Tellann's Prisma SuggestionType values (PREREQUISITE, ERROR_PATH, RESTORE_DECLARATION, ...), not packages/ai's. */
+  suggestionType: z.string().nullable().optional(),
   suggestedStatesJson: z.array(DeclaredSuggestionStateSchema).nullable().optional(),
   suggestedTransitionsJson: z.array(DeclaredSuggestionTransitionSchema).nullable().optional(),
+  restoreDeclarationJson: DeclaredRestoreDeclarationSchema.nullable().optional(),
 }).passthrough();
 export const FlowSuggestionMetaSchema = z.object({
   ruleCount: z.number().int().nonnegative().default(0), aiCount: z.number().int().nonnegative().default(0),

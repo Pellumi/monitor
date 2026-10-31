@@ -173,7 +173,7 @@ type DesktopContextValue = {
   applyFlowReview(applicationId: string, flowId: string, input: Record<string, unknown>): Promise<Record<string, unknown>>;
   declineFlowReview(applicationId: string, flowId: string, reviewId: string): Promise<Record<string, unknown>>;
   getFlowDiagrams(applicationId: string, flowId: string, versionId?: string): Promise<Record<string, unknown>>;
-  saveFlowExport(filename: string, contentBase64: string): Promise<{ cancelled: boolean; filePath?: string; filename?: string }>;
+  saveFlowExport(filename: string, contentBase64: string, options?: { render: 'png' | 'pdf'; title: string; subtitle: string }): Promise<{ cancelled: boolean; filePath?: string; filename?: string }>;
   initializeFlow(input: Record<string, unknown>): Promise<Record<string, unknown>>;
   getFlowInitialization(initializationId: string): Promise<Record<string, any>>;
   /** Stage and counts only; the record itself is fetched when the stage changes. */
@@ -787,7 +787,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     applyFlowReview: (applicationId, flowId, input) => perform(() => bridge().intent.applyFlowReview(applicationId, flowId, input)),
     declineFlowReview: (applicationId, flowId, reviewId) => bridge().intent.declineFlowReview(applicationId, flowId, reviewId),
     getFlowDiagrams: (applicationId, flowId, versionId) => bridge().intent.getFlowDiagrams(applicationId, flowId, versionId),
-    saveFlowExport: (filename, contentBase64) => bridge().intent.saveFlowExport(filename, contentBase64),
+    saveFlowExport: (filename, contentBase64, options) => bridge().intent.saveFlowExport(filename, contentBase64, options),
     initializeFlow: (input) => perform(() => bridge().intent.initializeFlow(input)),
     getFlowInitialization: (initializationId) => bridge().intent.getFlowInitialization(initializationId),
     // Deliberately outside `perform`: this runs on a timer while the user waits,

@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { z } from 'zod';
 import { sanitizeAiInputFull } from './privacy/sanitize-ai-input';
-import { normalizeWorkflowLanguage } from './flow-language';
+import { normalizeWorkflowLanguage, lintWorkflowLanguage } from './flow-language';
 import { groundInDocument } from './flow-grounding';
 import type { FlowLanguageIssue } from './flow-language';
 import { sanitizeControl, sanitizeEffects, sanitizeInputs, sanitizeMode, sanitizeRecognizer, sanitizeRequires, sanitizeSubFlow } from './flow-spec';
@@ -16,6 +16,9 @@ import { FLOW_LANGUAGE_PROMPT } from './prompts/flow-language.prompt';
 // PDFs, DOCX, Markdown, etc. are understood directly — no local text extraction.
 // ─────────────────────────────────────────────────────────────
 
+/** A short phrase copied verbatim from the document — what `groundInDocument` checks a state/transition against. */
+const evidenceField = z.string().nullish().transform((value) => value?.trim().slice(0, 200) || undefined);
+
 export const DocumentFlowStateSchema = z.object({
   name: z.string().min(1),
   category: z
@@ -29,6 +32,7 @@ export const DocumentFlowStateSchema = z.object({
   actor: z.string().nullish().transform((value) => value ?? undefined),
   recognizer: z.unknown().transform(sanitizeRecognizer),
   subFlow: z.unknown().transform(sanitizeSubFlow),
+  evidence: evidenceField,
 });
 
 export const DocumentFlowTransitionSchema = z.object({
@@ -40,6 +44,7 @@ export const DocumentFlowTransitionSchema = z.object({
   inputs: z.unknown().transform((value) => { const inputs = sanitizeInputs(value); return inputs.length ? inputs : undefined; }),
   effects: z.unknown().transform((value) => { const effects = sanitizeEffects(value); return effects.length ? effects : undefined; }),
   mode: z.unknown().transform(sanitizeMode),
+  evidence: evidenceField,
 });
 
 export const DocumentFlowSchema = z.object({
@@ -67,8 +72,16 @@ export interface DocumentFlowResult extends DocumentFlow {
   provider: string;
   model: string;
   promptHash: string;
-  /** Details the model declared that the document does not support, and so were left out. */
+  /** Details — and, now, whole states/transitions — the document does not support, so were left out. */
   leftOut?: FlowLanguageIssue[];
+  /** Structural problems in the resulting graph itself (no initial state, an unreachable state, ...). */
+  structuralIssues?: FlowLanguageIssue[];
+  /** True when the self-consistency pass found and repaired an ordering problem. */
+  repairedOrdering?: boolean;
+  /** Provider calls this generation made: 1, or 2 when the self-consistency pass ran (whether or not it changed anything) — the real cost unit, not wall time alone. */
+  providerCalls: number;
+  /** Wall time in ms for the whole call, generation plus the repair pass if it ran. */
+  generationMs: number;
 }
 
 export interface GenerateFlowFromDocumentOptions {
@@ -78,6 +91,22 @@ export interface GenerateFlowFromDocumentOptions {
   mimeType: string;
   /** Original filename — used only to give the model context. */
   filename: string;
+  /**
+   * The document's extracted text, when the caller already has it (for example via
+   * `@tellann/document-intelligence`). When present, grounding checks every recognizer,
+   * control, effect, requirement AND every state/transition's `evidence` against it —
+   * instead of the file bytes alone, which for most non-text mime types (PDF included)
+   * cannot be checked at all. Pass this whenever the caller can extract it.
+   */
+  documentText?: string;
+  /** Evidence segments (from `@tellann/document-intelligence`), used to attach `evidenceIds` to the output. */
+  evidenceSegments?: Array<{ id: string; excerpt: string }>;
+  /** Other flows in this application the model may reference with `subFlow`, instead of only drawing one flow in isolation. */
+  existingFlows?: DocumentFlowExistingFlow[];
+  /** Narrows generation to one journey the document describes, for multi-flow decomposition (see `decomposeDocumentIntoFlows`). */
+  journey?: DocumentFlowJourneyHint;
+  /** Skip the self-consistency repair pass (it costs a second call; on by default when `documentText` is given). */
+  skipConsistencyCheck?: boolean;
   env?: NodeJS.ProcessEnv;
   /** Per-attempt timeout (default 60s — multimodal calls are slower). */
   timeoutMs?: number;
@@ -126,6 +155,7 @@ const RESPONSE_SCHEMA = {
             },
           },
           subFlow: { type: 'object', properties: { name: { type: 'string' } } },
+          evidence: { type: 'string' },
         },
         required: ['name', 'category', 'role'],
       },
@@ -167,6 +197,7 @@ const RESPONSE_SCHEMA = {
             },
           },
           mode: { type: 'string', enum: ['AUTO', 'CONFIRM', 'MANUAL'] },
+          evidence: { type: 'string' },
         },
         required: ['from', 'to'],
       },
@@ -177,16 +208,55 @@ const RESPONSE_SCHEMA = {
 // `requires` is left out of the response schema on purpose: the document rarely says it, and a schema
 // that lists it invites a model to fill it in.
 
-function buildPrompt(filename: string): string {
+export interface DocumentFlowJourneyHint {
+  name: string;
+  purpose: string;
+  entryHint?: string;
+  exitHint?: string;
+}
+
+export interface DocumentFlowExistingFlow {
+  name: string;
+  purpose?: string;
+}
+
+function buildPrompt(
+  filename: string,
+  options?: { journey?: DocumentFlowJourneyHint; existingFlows?: DocumentFlowExistingFlow[] },
+): string {
+  const scope = options?.journey
+    ? [
+        `Extract ONLY the following journey as a finite state machine — ignore everything else in the document, including other journeys it describes:`,
+        `  Journey: ${options.journey.name}`,
+        `  Purpose: ${options.journey.purpose}`,
+        ...(options.journey.entryHint ? [`  Starts at: ${options.journey.entryHint}`] : []),
+        ...(options.journey.exitHint ? [`  Ends at: ${options.journey.exitHint}`] : []),
+      ]
+    : [
+        'Extract ONE focused user-facing flow (a bounded capability such as checkout, sign-up, password reset, course enrolment — not the entire product) as a finite state machine.',
+      ];
+  const existingFlows = options?.existingFlows?.length
+    ? [
+        `EXISTING FLOWS you may reuse as a subFlow — a state that stands for one of these in full, instead of repeating its steps:`,
+        ...options.existingFlows.map((flow) => `  - ${flow.name}${flow.purpose ? `: ${flow.purpose}` : ''}`),
+        'Use subFlow ONLY for a state that genuinely hands off to one of these flows end-to-end (for example, a step that pays and unlocks access). Do not invent a flow name that is not in this list.',
+      ]
+    : ['EXISTING FLOWS you may reuse as a subFlow: none. Do not use subFlow.'];
   return [
     'You are a product analyst. The attached document describes a software product or a feature of one.',
     `Filename: ${filename}`,
     '',
-    'Extract ONE focused user-facing flow (a bounded capability such as checkout, sign-up, password reset, course enrolment — not the entire product) as a finite state machine.',
+    ...scope,
     '',
     ...FLOW_LANGUAGE_PROMPT,
     '',
-    'EXISTING FLOWS you may reuse as a subFlow: none. Do not use subFlow.',
+    'EVIDENCE. For every state and every transition, set "evidence" to a short phrase (3-12 words) copied verbatim from the document that says this state or step exists. This is checked mechanically afterward: a state or transition whose evidence cannot be found in the document is removed, so a wrong or missing citation loses that state or transition entirely, not just one detail. Leave "evidence" empty only for a state that is the flow\'s implicit, undescribed starting point (e.g. "the user is signed in already") — never for a state or transition the document actually describes. Never copy text from a different part of the document than the one that describes this state or step.',
+    '',
+    'BRANCHES. When the document describes two or more outcomes for the same situation with language like "if X / otherwise Y", "when X vs when Y", or a threshold ("less than N", "more than N"), model it as two (or more) transitions leaving the same state, each with a distinct "condition" naming which case it is (e.g. EXAM_LT_2_DAYS / EXAM_GTE_2_DAYS, SUBSCRIBED / NOT_SUBSCRIBED) — never collapse them into a single path or drop the branch the document also describes.',
+    '',
+    'ORDER. When the document states that one thing only happens after another ("does not X until Y", "once Y, then X"), the transitions must reflect that exact order. Re-read the document for this before finishing: a flow that silently reorders or skips a stated dependency is wrong even if every individual state and transition is otherwise correct.',
+    '',
+    ...existingFlows,
     '- Do not invent requirements that are not supported by the document.',
     '- "name" is a short human title for the flow. "purpose" is one sentence. "scopeStatement" states the boundary (first state → last state).',
     '',
@@ -217,50 +287,20 @@ function resolveGemini(env: NodeJS.ProcessEnv) {
 /** Load or availability problems that another model may not share. */
 const RETRY_WITH_NEXT_MODEL = new Set([404, 408, 429, 500, 502, 503, 504]);
 
+type Gemini = NonNullable<ReturnType<typeof resolveGemini>>;
+
 /**
- * Sends the raw file to Gemini and returns a validated single-flow graph.
- * Throws on missing credentials, transport failure, or an unparseable response.
+ * One call to Gemini with the model-fallback chain, returning the concatenated text of
+ * the first candidate. Shared by document generation, the self-consistency repair pass,
+ * and journey decomposition, so all three fail over models and report errors the same way.
  */
-export async function generateFlowFromDocument(
-  input: GenerateFlowFromDocumentOptions,
-): Promise<DocumentFlowResult> {
-  const env = input.env ?? process.env;
-  const gemini = resolveGemini(env);
-  if (!gemini) {
-    throw new Error('DOCUMENT_FLOW_PROVIDER_UNCONFIGURED');
-  }
-
-  const prompt = buildPrompt(input.filename);
-  const promptHash = crypto
-    .createHash('sha256')
-    .update(`${prompt}:${input.mimeType}:${input.fileBase64.length}`)
-    .digest('hex');
-
-  const body = JSON.stringify({
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { inline_data: { mime_type: input.mimeType, data: input.fileBase64 } },
-          { text: prompt },
-        ],
-      },
-    ],
-    generationConfig: {
-      temperature: 0.2,
-      responseMimeType: 'application/json',
-      responseSchema: RESPONSE_SCHEMA,
-    },
-  });
-
-  // A model that is overloaded or gone should not fail the upload while the next
-  // one is up. Each model gets the full timeout; the last failure is what is reported.
+async function callGemini(gemini: Gemini, body: string, timeoutMs: number): Promise<{ text: string; usedModel: string }> {
   let payload: any;
   let usedModel = gemini.models[0];
   let lastError: Error | undefined;
   for (const model of gemini.models) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), input.timeoutMs ?? 60_000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${gemini.url(model)}?key=${gemini.apiKey}`, {
         method: 'POST',
@@ -293,17 +333,138 @@ export async function generateFlowFromDocument(
       .filter(Boolean)
       .join('') ?? undefined;
   if (!text) throw new Error('DOCUMENT_FLOW_EMPTY_RESPONSE');
+  return { text, usedModel };
+}
 
-  let parsed: unknown;
+function parseJsonLoose(text: string): unknown {
   try {
-    parsed = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     const match = text.match(/\{[\s\S]*\}/);
     if (!match) throw new Error('DOCUMENT_FLOW_UNPARSEABLE_RESPONSE');
-    parsed = JSON.parse(match[0]);
+    return JSON.parse(match[0]);
+  }
+}
+
+const REPAIR_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    changed: { type: 'boolean' },
+    explanation: { type: 'string' },
+    transitions: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          from: { type: 'string' }, to: { type: 'string' }, action: { type: 'string' }, condition: { type: 'string' },
+        },
+        required: ['from', 'to'],
+      },
+    },
+  },
+  required: ['changed', 'transitions'],
+} as const;
+
+const RepairResponseSchema = z.object({
+  changed: z.boolean().default(false),
+  explanation: z.string().nullish(),
+  transitions: z.array(z.object({
+    from: z.string().min(1), to: z.string().min(1),
+    action: z.string().nullish().transform((v) => v ?? undefined),
+    condition: z.string().nullish().transform((v) => v ?? undefined),
+  })).default([]),
+});
+
+/**
+ * A second, text-only pass: shows the model its own draft next to the document and asks
+ * it to check ONLY for two mistakes a single generation pass is prone to — a step
+ * sequenced before something the document says must happen first, and a branch the
+ * document describes ("if X / otherwise Y") that got collapsed into one path. It may
+ * only return a revised transition list; it cannot add, rename, or remove states, and
+ * any transition it returns that does not resolve to an existing state is dropped by
+ * `normalizeWorkflowLanguage` the same way a first-pass mistake would be.
+ */
+async function repairOrdering(input: {
+  gemini: Gemini;
+  documentText: string;
+  flow: { key: string; name: string; states: Array<{ key: string; name: string }>; transitions: Array<{ from: string; to: string; action?: string; condition?: string }> };
+  timeoutMs: number;
+}): Promise<{ transitions: Array<{ from: string; to: string; action?: string; condition?: string }>; changed: boolean } | null> {
+  const draft = {
+    states: input.flow.states.map((state) => state.key),
+    transitions: input.flow.transitions.map((transition) => ({ from: transition.from, to: transition.to, action: transition.action, condition: transition.condition })),
+  };
+  const prompt = [
+    'You checked a document and drew this flow from it:',
+    JSON.stringify(draft),
+    '',
+    'Re-read the document below. Check for exactly two kinds of mistake:',
+    '1. A transition that is sequenced before something the document says must happen first (e.g. the document says X only happens after Y is confirmed, but the draft has X before Y).',
+    '2. A branch the document describes with "if X / otherwise Y" or a threshold that the draft collapsed into a single path, dropping one of the cases.',
+    '',
+    'If you find either, return a corrected "transitions" array that fixes ONLY that — same states, same "from"/"to" values (you may not introduce a state name not already listed above), minimally reordered or branched. Set "changed": true and say what you fixed in "explanation".',
+    'If the draft already reflects the document correctly, return "changed": false and an empty "transitions" array. Do not make a change you cannot point to in the text below.',
+    '',
+    'DOCUMENT:',
+    input.documentText.slice(0, 20_000),
+    '',
+    'Respond ONLY with JSON matching the provided schema.',
+  ].join('\n');
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { temperature: 0.1, responseMimeType: 'application/json', responseSchema: REPAIR_RESPONSE_SCHEMA },
+  });
+  try {
+    const { text } = await callGemini(input.gemini, body, input.timeoutMs);
+    const result = RepairResponseSchema.parse(parseJsonLoose(text));
+    return result.changed && result.transitions.length ? result : { transitions: [], changed: false };
+  } catch {
+    // The repair pass is an enhancement, never a requirement — the first-pass draft still stands on its own.
+    return null;
+  }
+}
+
+/**
+ * Sends the raw file to Gemini and returns a validated single-flow graph.
+ * Throws on missing credentials, transport failure, or an unparseable response.
+ */
+export async function generateFlowFromDocument(
+  input: GenerateFlowFromDocumentOptions,
+): Promise<DocumentFlowResult> {
+  const startedAt = Date.now();
+  let providerCalls = 0;
+  const env = input.env ?? process.env;
+  const gemini = resolveGemini(env);
+  if (!gemini) {
+    throw new Error('DOCUMENT_FLOW_PROVIDER_UNCONFIGURED');
   }
 
-  const parsedFlow = DocumentFlowSchema.parse(parsed);
+  const prompt = buildPrompt(input.filename, { journey: input.journey, existingFlows: input.existingFlows });
+  const promptHash = crypto
+    .createHash('sha256')
+    .update(`${prompt}:${input.mimeType}:${input.fileBase64.length}`)
+    .digest('hex');
+
+  const body = JSON.stringify({
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { inline_data: { mime_type: input.mimeType, data: input.fileBase64 } },
+          { text: prompt },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+    },
+  });
+
+  const { text, usedModel } = await callGemini(gemini, body, input.timeoutMs ?? 60_000);
+  providerCalls += 1;
+  const parsedFlow = DocumentFlowSchema.parse(parseJsonLoose(text));
 
   // Whatever the model wrote, the flow the rest of Tellann sees is in the flow
   // language: compact state keys, verb-phrase actions, one INITIAL, real endings,
@@ -315,16 +476,71 @@ export async function generateFlowFromDocument(
     transitions: parsedFlow.transitions,
     requires: parsedFlow.requires,
   });
-  // What a model declares outranks what the code says, so nothing is kept that the document does not support. A file
-  // read as text can be checked; one the model read directly (a PDF) cannot, so what would silently override the code
-  // when wrong (routes, headings, requests, environments) is left out and the rest is kept for the reviewer to see.
-  const readable = /^(text\/|application\/(json|xml|x-yaml|yaml))/.test(input.mimeType);
-  const { workflow: normalized, dropped } = groundInDocument(language, readable ? Buffer.from(input.fileBase64, 'base64').toString('utf8') : null);
+
+  // A document the caller already extracted text from (any mime type) can be checked in
+  // full; otherwise only a handful of text-ish mime types can be decoded straight from
+  // the base64 bytes. A PDF is neither — this is the gap that used to drop every
+  // recognizer, control detail and evidence citation for the most common upload type.
+  const readableByMime = /^(text\/|application\/(json|xml|x-yaml|yaml))/.test(input.mimeType);
+  const documentText = input.documentText ?? (readableByMime ? Buffer.from(input.fileBase64, 'base64').toString('utf8') : null);
+
+  let groundedWorkflow = language;
+  const dropped: FlowLanguageIssue[] = [];
+  let repairedOrdering = false;
+  if (documentText !== null) {
+    // One self-consistency pass before grounding: a reordered or collapsed branch is a
+    // topology mistake grounding cannot see (both halves may each be individually
+    // well-cited), so it is checked and, if possible, fixed first.
+    if (!input.skipConsistencyCheck) {
+      const repair = await repairOrdering({
+        gemini, documentText,
+        flow: { key: language.key, name: language.name, states: language.states, transitions: language.transitions },
+        timeoutMs: Math.min(input.timeoutMs ?? 30_000, 30_000),
+      });
+      providerCalls += 1;
+      if (repair?.changed) {
+        repairedOrdering = true;
+        // The repair pass only echoes back from/to/action/condition — richer fields
+        // (control, inputs, effects, mode, evidence) are carried over from the original
+        // transition with the same (from, to, action) identity, where one exists. A
+        // transition the repair newly introduces (a restored branch) has none of those
+        // yet; it still passes through grounding, just with nothing extra to verify.
+        const byIdentity = new Map(language.transitions.map((transition) => [`${transition.from}|${transition.to}|${transition.action ?? ''}`, transition]));
+        const merged = repair.transitions.map((transition) => {
+          const original = byIdentity.get(`${transition.from}|${transition.to}|${transition.action ?? ''}`);
+          return original ? { ...original, condition: transition.condition ?? original.condition } : transition;
+        });
+        groundedWorkflow = normalizeWorkflowLanguage({
+          ...language,
+          // States are not up for revision in the repair pass — only how they connect.
+          states: language.states,
+          transitions: merged,
+        }) as typeof language;
+      }
+    }
+  }
+  // What a model declares outranks what the code says, so nothing is kept that the document does not support.
+  const ground = groundInDocument(groundedWorkflow, documentText);
+  const normalized = ground.workflow;
+  dropped.push(...ground.dropped);
+
+  const structuralIssues = lintWorkflowLanguage({ key: normalized.key, name: normalized.name, states: normalized.states, transitions: normalized.transitions });
 
   // Privacy: the derived name/purpose/scope come back into our system, so scrub
   // them the same way free-text description input is scrubbed.
   const scrub = (value: string) =>
     value ? sanitizeAiInputFull(value).sanitizedText : value;
+
+  // Correlate each surviving state/transition's evidence quote back to the segment(s) it
+  // was drawn from, so the graph carries citations a reviewer (or the suggestions
+  // pipeline) can jump to — `BehaviorGraphNode.evidenceIds` / `...Edge.evidenceIds`
+  // already exist for exactly this.
+  const evidenceIdsFor = (evidence: string | undefined): string[] | undefined => {
+    if (!evidence || !input.evidenceSegments?.length) return undefined;
+    const needle = evidence.toLowerCase();
+    const ids = input.evidenceSegments.filter((segment) => segment.excerpt.toLowerCase().includes(needle)).map((segment) => segment.id);
+    return ids.length ? ids.slice(0, 5) : undefined;
+  };
 
   return {
     ...parsedFlow,
@@ -337,6 +553,7 @@ export async function generateFlowFromDocument(
       actor: state.actor ? scrub(state.actor) : undefined,
       recognizer: state.recognizer as StateRecognizer | undefined,
       subFlow: state.subFlow as SubFlowRef | undefined,
+      ...(evidenceIdsFor(state.evidence) ? { evidenceIds: evidenceIdsFor(state.evidence) } : {}),
     })),
     transitions: normalized.transitions.map((transition) => ({
       from: transition.from,
@@ -347,6 +564,7 @@ export async function generateFlowFromDocument(
       inputs: transition.inputs as TransitionInput[] | undefined,
       effects: transition.effects as TransitionEffect[] | undefined,
       mode: transition.mode as StepMode | undefined,
+      ...(evidenceIdsFor(transition.evidence) ? { evidenceIds: evidenceIdsFor(transition.evidence) } : {}),
     })),
     requires: normalized.requires as FlowRequires | undefined,
     name: scrub(parsedFlow.name) || 'New Flow',
@@ -356,5 +574,80 @@ export async function generateFlowFromDocument(
     model: usedModel,
     promptHash,
     leftOut: dropped,
+    structuralIssues,
+    repairedOrdering,
+    providerCalls,
+    generationMs: Date.now() - startedAt,
   };
+}
+
+export interface DocumentJourney {
+  name: string;
+  purpose: string;
+  entryHint?: string;
+  exitHint?: string;
+}
+
+const DECOMPOSE_RESPONSE_SCHEMA = {
+  type: 'object',
+  properties: {
+    journeys: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          name: { type: 'string' }, purpose: { type: 'string' }, entryHint: { type: 'string' }, exitHint: { type: 'string' },
+        },
+        required: ['name', 'purpose'],
+      },
+    },
+  },
+  required: ['journeys'],
+} as const;
+
+const DecomposeResponseSchema = z.object({
+  journeys: z.array(z.object({
+    name: z.string().min(1),
+    purpose: z.string().default(''),
+    entryHint: z.string().nullish().transform((v) => v ?? undefined),
+    exitHint: z.string().nullish().transform((v) => v ?? undefined),
+  })).max(8),
+});
+
+/**
+ * First pass of multi-flow generation: lists the distinct journeys the document
+ * describes, so each can be generated as its own flow (via `generateFlowFromDocument`
+ * with `journey` set) and reference the others with `subFlow` instead of one generation
+ * call being forced to compress — or truncate — an entire document into a single flow.
+ */
+export async function decomposeDocumentIntoFlows(input: {
+  fileBase64: string;
+  mimeType: string;
+  filename: string;
+  env?: NodeJS.ProcessEnv;
+  timeoutMs?: number;
+}): Promise<DocumentJourney[]> {
+  const env = input.env ?? process.env;
+  const gemini = resolveGemini(env);
+  if (!gemini) throw new Error('DOCUMENT_FLOW_PROVIDER_UNCONFIGURED');
+
+  const prompt = [
+    'You are a product analyst. The attached document describes a software product or a feature of one.',
+    `Filename: ${input.filename}`,
+    '',
+    'List the DISTINCT user-facing journeys this document describes — each a bounded, nameable capability a user completes start to finish (such as "first-time onboarding", "checkout", "password reset"). Steps that follow one another as part of the same story belong in ONE journey, not several — only split when journeys begin in different places and do not simply continue one another.',
+    '- For each journey give: "name" (a short title), "purpose" (one sentence), "entryHint" (how the document says this journey begins) and "exitHint" (how it ends).',
+    '- A journey that mainly exists to be reused inside others (for example, a payment step reused from several places) should still be listed once on its own — it will be generated once and referenced from the rest via subFlow.',
+    '- List at most 8 journeys. Prefer fewer, correctly-scoped journeys over many overlapping ones.',
+    '',
+    'Respond ONLY with JSON matching the provided schema.',
+  ].join('\n');
+
+  const body = JSON.stringify({
+    contents: [{ role: 'user', parts: [{ inline_data: { mime_type: input.mimeType, data: input.fileBase64 } }, { text: prompt }] }],
+    generationConfig: { temperature: 0.1, responseMimeType: 'application/json', responseSchema: DECOMPOSE_RESPONSE_SCHEMA },
+  });
+
+  const { text } = await callGemini(gemini, body, input.timeoutMs ?? 45_000);
+  return DecomposeResponseSchema.parse(parseJsonLoose(text)).journeys;
 }

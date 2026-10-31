@@ -52,6 +52,9 @@ import {
   MoveVertical,
   MoveHorizontal,
   Download,
+  AlertCircle,
+  CheckCircle2,
+  BookOpen,
 } from "lucide-react";
 import {
   computeAutoLayout,
@@ -96,6 +99,8 @@ interface EditorState {
   // What a person declared about the state.
   recognizer?: unknown;
   subFlowId?: string | null;
+  // IntentEvidence row ids this state's declaration was drawn from, if generated from a document.
+  evidenceIds?: string[];
   description?: string | null;
   actor?: string | null;
 }
@@ -112,6 +117,8 @@ interface EditorTransition {
   expectedInput?: unknown;
   expectedOutput?: unknown;
   mode?: "AUTO" | "CONFIRM" | "MANUAL" | null;
+  // IntentEvidence row ids this transition's declaration was drawn from, if generated from a document.
+  evidenceIds?: string[];
 }
 
 interface EditorFlow {
@@ -133,6 +140,13 @@ interface EditorFlow {
   draftSeq?: number;
   aiDraftStatus?: string | null;
   aiDraftSourceName?: string | null;
+  // What document generation left out or flagged — grounding drops (an invented state, a
+  // route the document never wrote) and structural lint issues. See
+  // packages/ai/src/flow-grounding.ts and flow-language.ts's FlowLanguageIssue.
+  aiDraftIssues?: {
+    leftOut?: Array<{ code: string; severity: string; message: string; target?: string; detail?: string }>;
+    structuralIssues?: Array<{ code: string; severity: string; message: string; target?: string }>;
+  } | null;
   // What a run needs before it starts: { actor?, environments[], data[] }.
   requires?: unknown;
 }
@@ -350,6 +364,128 @@ function EditorTransitionEdge({
 
 const editorEdgeTypes = { editorTransition: EditorTransitionEdge };
 
+/**
+ * What document generation left out or flagged, and how much of the graph is actually
+ * grounded — shown right under the draft banner, since that is the moment a reviewer is
+ * looking at a freshly generated draft and deciding whether to trust it. Previously this
+ * was only reachable by opening the Suggestions tab and recognising a RESTORE_DECLARATION
+ * card among the rest; this surfaces it directly, with each entry jumping straight to the
+ * state or transition it is about.
+ */
+function DocumentGroundingBanner({
+  flow,
+  onSelectState,
+  onSelectTransition,
+}: {
+  flow: EditorFlow;
+  onSelectState: (stateId: string) => void;
+  onSelectTransition: (transitionId: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const leftOut = flow.aiDraftIssues?.leftOut ?? [];
+  const structuralIssues = flow.aiDraftIssues?.structuralIssues ?? [];
+  const issueCount = leftOut.length + structuralIssues.length;
+
+  // "Grounded" = this state/transition carries evidenceIds pointing back to the source
+  // document (see packages/ai/src/document-flow.ts). Not literally "% of the document
+  // covered" (we don't know the document's total segment count here) — it's how much of
+  // what IS in the graph is tied to a citation, which is the part a reviewer can trust
+  // without re-reading the source by hand.
+  const groundableCount = flow.states.length + flow.transitions.length;
+  const groundedCount =
+    flow.states.filter((state) => (state.evidenceIds?.length ?? 0) > 0).length +
+    flow.transitions.filter((transition) => (transition.evidenceIds?.length ?? 0) > 0).length;
+  const hasGroundingData = groundedCount > 0; // older flows / hand-authored ones never set evidenceIds at all
+
+  if (!issueCount && !hasGroundingData) return null;
+
+  const jumpToTarget = (target?: string) => {
+    if (!target) return;
+    if (target.includes("→")) {
+      const [fromName, toName] = target.split("→").map((part) => part.trim());
+      const from = flow.states.find((s) => s.stateName === fromName);
+      const to = flow.states.find((s) => s.stateName === toName);
+      const transition = flow.transitions.find(
+        (t) => t.fromStateId === from?.id && t.toStateId === to?.id,
+      );
+      if (transition) onSelectTransition(transition.id);
+      return;
+    }
+    const state = flow.states.find((s) => s.stateName === target);
+    if (state) onSelectState(state.id);
+  };
+
+  return (
+    <div className="shrink-0 border-b border-[#262626] bg-black/40 px-4 py-2 text-xs text-neutral-300">
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 text-left"
+      >
+        <span className="flex items-center gap-3">
+          {hasGroundingData && (
+            <span className="flex items-center gap-1.5 text-neutral-400">
+              <BookOpen className="h-3.5 w-3.5" />
+              {groundedCount}/{groundableCount} grounded in the source document
+            </span>
+          )}
+          {issueCount > 0 && (
+            <span className="flex items-center gap-1.5 text-amber-300">
+              <AlertCircle className="h-3.5 w-3.5" />
+              {issueCount} left out or flagged
+            </span>
+          )}
+        </span>
+        <ChevronRight
+          className={`h-3.5 w-3.5 text-neutral-500 transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+      </button>
+      {expanded && (
+        <ul className="mt-2 space-y-1">
+          {leftOut.map((issue, index) => (
+            <li
+              key={`left-out-${index}`}
+              className="flex items-start gap-1.5 rounded border border-[#262626] bg-[#111] px-2 py-1.5"
+            >
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400" />
+              <button
+                type="button"
+                onClick={() => jumpToTarget(issue.target)}
+                disabled={!issue.target}
+                className="text-left text-[11px] text-neutral-300 hover:text-white disabled:cursor-default disabled:hover:text-neutral-300"
+              >
+                {issue.message}
+              </button>
+            </li>
+          ))}
+          {structuralIssues.map((issue, index) => (
+            <li
+              key={`structural-${index}`}
+              className="flex items-start gap-1.5 rounded border border-[#262626] bg-[#111] px-2 py-1.5"
+            >
+              <AlertCircle className="mt-0.5 h-3 w-3 shrink-0 text-red-400" />
+              <button
+                type="button"
+                onClick={() => jumpToTarget(issue.target)}
+                disabled={!issue.target}
+                className="text-left text-[11px] text-neutral-300 hover:text-white disabled:cursor-default disabled:hover:text-neutral-300"
+              >
+                {issue.message}
+              </button>
+            </li>
+          ))}
+          {!issueCount && (
+            <li className="flex items-center gap-1.5 px-2 py-1 text-[11px] text-neutral-500">
+              <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+              Nothing was left out or flagged.
+            </li>
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function SuggestionsSkeleton() {
   return (
     <div className="space-y-3 animate-pulse">
@@ -413,6 +549,25 @@ export function FlowGraphEditor({
       return res.json();
     },
     enabled: !!flowId,
+  });
+
+  // The document a draft was generated from, read back as the same text segments
+  // `generateFlowFromDocument` could cite against — see `DocumentGroundingBanner`'s
+  // evidenceIds and the "Source" tab below. Only loaded for a flow that has
+  // aiDraftSourceName at all; most flows were never generated from a document.
+  const { data: sourceSegments } = useQuery<{
+    sourceName: string | null;
+    segments: Array<{ id: string; sourceLabel: string | null; excerpt: string; locator: string }>;
+  }>({
+    queryKey: ["flow-source-segments", appId, flowId],
+    queryFn: async () => {
+      const res = await authenticatedFetch(
+        `${API}/applications/${appId}/declared-flow/${flowId}/source-segments`,
+      );
+      if (!res.ok) throw new Error("Failed to load source segments");
+      return res.json();
+    },
+    enabled: !!flowId && !!flow?.aiDraftSourceName,
   });
 
   const { data: suggestionResponse, isFetching: suggestionsLoading } =
@@ -532,7 +687,7 @@ export function FlowGraphEditor({
   const [selectedStateId, setSelectedStateId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [panelTab, setPanelTab] = useState<
-    "build" | "suggestions" | "history" | "settings"
+    "build" | "suggestions" | "source" | "history" | "settings"
   >("build");
   const [publishError, setPublishError] = useState<string | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
@@ -1426,6 +1581,14 @@ export function FlowGraphEditor({
         </div>
       )}
 
+      {flow && (
+        <DocumentGroundingBanner
+          flow={flow}
+          onSelectState={(stateId) => setSelectedStateId(stateId)}
+          onSelectTransition={(transitionId) => setSelectedEdgeId(transitionId)}
+        />
+      )}
+
       {/* Body: canvas + side panel */}
       <div className="flex min-h-0 flex-1">
         <div className="flow-graph-canvas relative min-w-0 flex-1">
@@ -1562,6 +1725,9 @@ export function FlowGraphEditor({
               [
                 { id: "build", label: "Build", icon: Plus },
                 { id: "suggestions", label: "Suggestions", icon: Activity },
+                ...(flow?.aiDraftSourceName
+                  ? ([{ id: "source", label: "Source", icon: BookOpen }] as const)
+                  : []),
                 { id: "history", label: "History", icon: History },
                 { id: "settings", label: "Settings", icon: Settings2 },
               ] as const
@@ -1949,6 +2115,50 @@ export function FlowGraphEditor({
                       </div>
                     );
                   })
+                )}
+              </div>
+            )}
+
+            {panelTab === "source" && flow && (
+              <div className="space-y-3">
+                <p className="text-[11px] leading-relaxed text-neutral-500">
+                  The text Tellann read from {sourceSegments?.sourceName ?? "the source document"}{" "}
+                  when this flow was generated. Selecting a state or transition on the
+                  canvas highlights the segment(s) its declaration was drawn from.
+                </p>
+                {!sourceSegments?.segments.length ? (
+                  <p className="rounded-md border border-[#262626] bg-black/40 p-3 text-[11px] text-neutral-500">
+                    No source text is available for this flow — either it was not
+                    generated from a document, or the document could not be read as
+                    text.
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {sourceSegments.segments.map((segment) => {
+                      const cited =
+                        (selectedState?.evidenceIds ?? []).includes(segment.id) ||
+                        (selectedEdge?.evidenceIds ?? []).includes(segment.id);
+                      return (
+                        <li
+                          key={segment.id}
+                          className={`rounded-md border p-2.5 text-[11px] transition-colors ${
+                            cited
+                              ? "border-white/40 bg-white/5 text-neutral-100"
+                              : "border-[#262626] bg-black/40 text-neutral-400"
+                          }`}
+                        >
+                          {segment.sourceLabel && (
+                            <p className="mb-1 font-semibold text-neutral-300">
+                              {segment.sourceLabel}
+                            </p>
+                          )}
+                          <p className="whitespace-pre-wrap leading-relaxed">
+                            {segment.excerpt}
+                          </p>
+                        </li>
+                      );
+                    })}
+                  </ul>
                 )}
               </div>
             )}

@@ -1,15 +1,31 @@
 import crypto from 'crypto';
 import { buildFlowSuggestionsPrompt, buildFlowSuggestionsRepairPrompt } from './prompt';
 import { mergeSuggestions } from './merge-suggestions';
+import { findAmbiguousBranches } from './branch-gaps';
+import { restoreDeclarationSuggestions } from './restore-declarations';
 import {
   AIFlowSuggestionResponseSchema,
   AIFlowSuggestionItem,
   FlowSuggestionsInput,
   FlowSuggestionsResult,
+  RuleBasedSuggestionItem,
 } from './schema';
 import { extractJson } from '../providers/json-http-provider';
 import { resolveAiProvider } from '../index';
 import { AIProvider } from '../providers/base';
+
+/**
+ * Rule-based suggestions this module computes itself, on top of whatever the caller
+ * already ran (`input.existingRuleSuggestions`) — branch-gap and restore-declaration
+ * checks need nothing an AI call would add, so they run unconditionally, AI on or off.
+ */
+function localRuleSuggestions(input: FlowSuggestionsInput): RuleBasedSuggestionItem[] {
+  const branchGaps = input.declaredFlows.flatMap((flow) => findAmbiguousBranches(flow));
+  const restores = input.sourceDocumentExcerpt && input.droppedDeclarations?.length
+    ? restoreDeclarationSuggestions(input.droppedDeclarations, input.sourceDocumentExcerpt)
+    : [];
+  return [...branchGaps, ...restores];
+}
 
 // ─────────────────────────────────────────────────────────────
 // Main entry point: generateFlowSuggestions
@@ -38,10 +54,12 @@ export async function generateFlowSuggestions(
     options?.enableAi ??
     String(process.env.AI_FLOW_SUGGESTIONS_ENABLED ?? '').toLowerCase() === 'true';
 
+  const ruleSuggestions = [...input.existingRuleSuggestions, ...localRuleSuggestions(input)];
+
   // If AI is disabled or not configured, return rule-based only
   if (!aiEnabled) {
     const merged = mergeSuggestions({
-      ruleSuggestions: input.existingRuleSuggestions,
+      ruleSuggestions,
       aiSuggestions: [],
     });
     return {
@@ -58,13 +76,14 @@ export async function generateFlowSuggestions(
     applicationDomain: input.applicationDomain,
     declaredFlows: input.declaredFlows,
     observedGraphSummary: input.observedGraphSummary,
-    existingRuleSuggestions: input.existingRuleSuggestions,
+    existingRuleSuggestions: ruleSuggestions,
     userDefinedGoals: input.userDefinedGoals,
     graphVersion: input.graphVersion,
     graphHash: input.graphHash,
     latestMutation: input.latestMutation,
     latestState: input.latestState,
     mode: input.mode,
+    sourceDocumentExcerpt: input.sourceDocumentExcerpt,
   });
 
   const promptHash = crypto.createHash('sha256').update(prompt).digest('hex');
@@ -102,7 +121,7 @@ export async function generateFlowSuggestions(
 
   // Merge rule + AI suggestions
   const merged = mergeSuggestions({
-    ruleSuggestions: input.existingRuleSuggestions,
+    ruleSuggestions,
     aiSuggestions,
   });
 

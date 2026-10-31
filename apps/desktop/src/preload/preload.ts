@@ -308,7 +308,8 @@ contextBridge.exposeInMainWorld('tellann', {
     applyFlowReview: (applicationId: string, flowId: string, input: unknown) => ipcRenderer.invoke(IPC.applyFlowReview, { applicationId, flowId, input }),
     declineFlowReview: (applicationId: string, flowId: string, reviewId: string) => ipcRenderer.invoke(IPC.declineFlowReview, { applicationId, flowId, reviewId }),
     getFlowDiagrams: (applicationId: string, flowId: string, versionId?: string) => ipcRenderer.invoke(IPC.getFlowDiagrams, { applicationId, flowId, versionId }),
-    saveFlowExport: (filename: string, contentBase64: string) => ipcRenderer.invoke(IPC.saveFlowExport, { filename, contentBase64 }),
+    saveFlowExport: (filename: string, contentBase64: string, options?: { render: 'png' | 'pdf'; title: string; subtitle: string }) =>
+      ipcRenderer.invoke(IPC.saveFlowExport, { filename, contentBase64, options }),
     initializeFlow: (input: unknown) => ipcRenderer.invoke(IPC.initializeFlow, input),
     getFlowInitialization: (initializationId: string) => ipcRenderer.invoke(IPC.getFlowInitialization, initializationId),
     getFlowInitializationProgress: (initializationId: string) => ipcRenderer.invoke(IPC.getFlowInitializationProgress, initializationId),

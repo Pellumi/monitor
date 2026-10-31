@@ -2477,7 +2477,7 @@ function FlowCreateView({
               )}
 
               {selected === "DOCUMENT" && (
-                <DocumentUploadPanel appId={appId} onGenerated={onGenerated} />
+                <DocumentUploadPanel appId={appId} onGenerated={onGenerated} onDone={onCancel} />
               )}
 
               {/* <button
@@ -2510,17 +2510,42 @@ const DOC_MIME_BY_EXT: Record<string, string> = {
 };
 const DOC_MAX_BYTES = 15 * 1024 * 1024;
 
+type MultiFlowResult = {
+  flowId: string;
+  name: string;
+  stateCount: number;
+  transitionCount: number;
+};
+type MultiFlowFailure = { journey: string; reason: string };
+type MultiFlowResponse = {
+  sourceName: string;
+  journeyCount: number;
+  flows: MultiFlowResult[];
+  failed: MultiFlowFailure[];
+  skippedJourneys?: string[];
+  meta: { decomposeMs: number; totalMs: number; totalProviderCalls: number };
+};
+
 function DocumentUploadPanel({
   appId,
   onGenerated,
+  onDone,
 }: {
   appId: string;
   onGenerated: (flowId: string) => void;
+  onDone: () => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [phase, setPhase] = useState<"idle" | "reading" | "generating">("idle");
   const [error, setError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  // Off by default: a single flow is the familiar, cheapest path. A document that
+  // actually describes several journeys (onboarding, a payment step reused elsewhere,
+  // an adaptive loop) is better served split — this is the opt-in for that, since it
+  // costs more provider calls (one decomposition pass plus 1-2 calls per journey found).
+  const [splitIntoFlows, setSplitIntoFlows] = useState(false);
+  const [skipConsistencyCheck, setSkipConsistencyCheck] = useState(false);
+  const [multiResult, setMultiResult] = useState<MultiFlowResponse | null>(null);
 
   const busy = phase !== "idle";
 
@@ -2536,9 +2561,29 @@ function DocumentUploadPanel({
       reader.readAsDataURL(file);
     });
 
+  const errorMessageFor = (payload: { error?: string }, status: number): string => {
+    const map: Record<string, string> = {
+      UNSUPPORTED_DOCUMENT_TYPE: "Unsupported file type.",
+      DOCUMENT_TOO_LARGE: "That file is too large.",
+      EMPTY_DOCUMENT: "That file looks empty.",
+      FEATURE_NOT_ENTITLED: "Your plan does not include document flow generation.",
+      NO_JOURNEYS_FOUND: "Couldn't find a distinct journey in this document.",
+      DOCUMENT_DECOMPOSITION_FAILED:
+        status === 503
+          ? "Document generation is not configured on this environment."
+          : "Couldn't split this document into journeys. Try generating a single flow instead.",
+      DOCUMENT_FLOW_GENERATION_FAILED:
+        status === 503
+          ? "Document generation is not configured on this environment."
+          : "Couldn't derive a flow from this document. Try a clearer requirements doc.",
+    };
+    return map[payload.error ?? ""] ?? payload.error ?? "Generation failed.";
+  };
+
   async function handleFile(file: File) {
     setError(null);
     setFileName(file.name);
+    setMultiResult(null);
     if (file.size > DOC_MAX_BYTES) {
       setError("That file is over the 15 MB limit.");
       return;
@@ -2553,33 +2598,95 @@ function DocumentUploadPanel({
       setPhase("reading");
       const dataBase64 = await readAsBase64(file);
       setPhase("generating");
+      const endpoint = splitIntoFlows ? "generate-flows" : "generate-flow";
       const res = await authenticatedFetch(
-        `${ONBOARDING_API}/applications/${appId}/source-documents/generate-flow`,
+        `${ONBOARDING_API}/applications/${appId}/source-documents/${endpoint}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ filename: file.name, mimeType, dataBase64 }),
+          body: JSON.stringify({ filename: file.name, mimeType, dataBase64, skipConsistencyCheck }),
         },
       );
       const payload = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const map: Record<string, string> = {
-          UNSUPPORTED_DOCUMENT_TYPE: "Unsupported file type.",
-          DOCUMENT_TOO_LARGE: "That file is too large.",
-          EMPTY_DOCUMENT: "That file looks empty.",
-          FEATURE_NOT_ENTITLED: "Your plan does not include document flow generation.",
-          DOCUMENT_FLOW_GENERATION_FAILED:
-            res.status === 503
-              ? "Document generation is not configured on this environment."
-              : "Couldn't derive a flow from this document. Try a clearer requirements doc.",
-        };
-        throw new Error(map[payload.error] ?? payload.error ?? "Generation failed.");
+      if (!res.ok) throw new Error(errorMessageFor(payload, res.status));
+      if (splitIntoFlows) {
+        setMultiResult(payload as MultiFlowResponse);
+        setPhase("idle");
+      } else {
+        onGenerated(payload.flowId);
       }
-      onGenerated(payload.flowId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed.");
       setPhase("idle");
     }
+  }
+
+  if (multiResult) {
+    return (
+      <div className="space-y-3 rounded-lg border border-[#262626] bg-black/40 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-white">
+            {multiResult.flows.length} of {multiResult.journeyCount} journey
+            {multiResult.journeyCount === 1 ? "" : "s"} generated from{" "}
+            {multiResult.sourceName}
+          </span>
+          <span className="shrink-0 font-mono text-[10px] text-neutral-500">
+            {Math.round(multiResult.meta.totalMs / 100) / 10}s ·{" "}
+            {multiResult.meta.totalProviderCalls} calls
+          </span>
+        </div>
+        <ul className="space-y-1.5">
+          {multiResult.flows.map((flow) => (
+            <li
+              key={flow.flowId}
+              className="flex items-center justify-between gap-2 rounded-md border border-[#1f1f1f] bg-black/60 px-3 py-2 text-[11px]"
+            >
+              <span className="flex min-w-0 items-center gap-1.5 text-neutral-200">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                <span className="truncate">{flow.name}</span>
+                <span className="shrink-0 text-neutral-500">
+                  {flow.stateCount} states · {flow.transitionCount} transitions
+                </span>
+              </span>
+              <button
+                type="button"
+                onClick={() => onGenerated(flow.flowId)}
+                className="shrink-0 text-neutral-400 hover:text-white"
+              >
+                Open
+              </button>
+            </li>
+          ))}
+          {multiResult.failed.map((failure) => (
+            <li
+              key={failure.journey}
+              className="flex items-start gap-1.5 rounded-md border border-amber-900/40 bg-amber-950/20 px-3 py-2 text-[11px] text-amber-300"
+            >
+              <AlertCircle className="mt-px h-3.5 w-3.5 shrink-0" />
+              <span>
+                <span className="font-semibold">{failure.journey}</span> could not be
+                generated: {failure.reason}
+              </span>
+            </li>
+          ))}
+        </ul>
+        {multiResult.skippedJourneys?.length ? (
+          <p className="text-[11px] text-neutral-500">
+            {multiResult.skippedJourneys.length} more journey
+            {multiResult.skippedJourneys.length === 1 ? "" : "s"} found but not
+            generated (over the per-upload limit):{" "}
+            {multiResult.skippedJourneys.join(", ")}
+          </p>
+        ) : null}
+        <button
+          type="button"
+          onClick={onDone}
+          className="w-full rounded-md border border-[#333] bg-[#111] px-3 py-2 text-[11px] font-semibold text-white hover:border-white/40"
+        >
+          Done — go to flow list
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -2679,6 +2786,33 @@ function DocumentUploadPanel({
               {error}
             </p>
           )}
+          <div className="space-y-1.5 border-t border-[#1f1f1f] pt-3">
+            <label className="flex cursor-pointer items-start gap-2 text-[11px] text-neutral-400">
+              <input
+                type="checkbox"
+                checked={splitIntoFlows}
+                onChange={(e) => setSplitIntoFlows(e.target.checked)}
+                className="mt-0.5 h-3 w-3 shrink-0 accent-white"
+              />
+              <span>
+                Split into multiple linked flows — for a document that describes more
+                than one journey (onboarding, a reused payment step, an adaptive loop).
+                Costs more provider calls per upload.
+              </span>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 text-[11px] text-neutral-400">
+              <input
+                type="checkbox"
+                checked={skipConsistencyCheck}
+                onChange={(e) => setSkipConsistencyCheck(e.target.checked)}
+                className="mt-0.5 h-3 w-3 shrink-0 accent-white"
+              />
+              <span>
+                Skip the ordering double-check — faster and cheaper, at the risk of a
+                step sequenced the way the document didn&apos;t describe.
+              </span>
+            </label>
+          </div>
           <p className="text-[11px] leading-relaxed text-neutral-500">
             The file is sent to Tellann&apos;s model, which drafts a flow you
             review in the editor before accepting.

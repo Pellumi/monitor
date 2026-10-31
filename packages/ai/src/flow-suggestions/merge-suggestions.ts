@@ -27,6 +27,9 @@ const VALID_SUGGESTION_TYPES = new Set<SuggestionType>([
   'MISSING_RECOVERY_PATH',
   'MISSING_EMPTY_STATE',
   'MISSING_LOADING_STATE',
+  'MISSING_DOCUMENTED_STEP',
+  'RESTORE_DECLARATION',
+  'AMBIGUOUS_BRANCH',
 ]);
 
 const RULE_TYPE_TO_SUGGESTION_TYPE: Record<string, SuggestionType> = {
@@ -39,6 +42,9 @@ const RULE_TYPE_TO_SUGGESTION_TYPE: Record<string, SuggestionType> = {
   MISSING_RECOVERY_PATH: 'MISSING_RECOVERY_PATH',
   MISSING_EMPTY_STATE: 'MISSING_EMPTY_STATE',
   MISSING_LOADING_STATE: 'MISSING_LOADING_STATE',
+  MISSING_DOCUMENTED_STEP: 'MISSING_DOCUMENTED_STEP',
+  RESTORE_DECLARATION: 'RESTORE_DECLARATION',
+  AMBIGUOUS_BRANCH: 'AMBIGUOUS_BRANCH',
 };
 
 function normalizeSuggestionType(type: string): SuggestionType {
@@ -108,6 +114,7 @@ export function mergeSuggestions(params: {
       suggestedTransitions: rs.suggestedTransitions,
       ruleConfidence: rs.confidence,
       evidenceStrength,
+      ...(rs.restoreDeclaration ? { restoreDeclaration: rs.restoreDeclaration } : {}),
     });
   }
 

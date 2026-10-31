@@ -25,6 +25,15 @@ import { canonicalRoutePattern } from './flow-spec';
  * With no text to check against (a model that read a file directly) nothing can be verified, so the details that
  * would silently override the code when wrong (routes, headings, requests, environments) are dropped outright and
  * the rest, which a reviewer can see and a run can only fail loudly on, are kept.
+ *
+ * A state or transition's own existence is a claim too, and the worst one to get wrong: an invented page or a
+ * wrongly-sequenced step is harder for a reviewer to spot than a wrong route. So a producer MAY attach `evidence` —
+ * a short phrase copied from the source — to a state or transition. When it does, and there is text to check
+ * against, that phrase must actually appear (as plain text or as a heading/control the way the checks above read
+ * them); when it doesn't, the whole state or transition is dropped, and any transition left pointing at a state
+ * that no longer exists goes with it. A producer that gives no `evidence` is unaffected — this is opt-in, so it
+ * never changes behaviour for a caller that doesn't supply it (the no-AI baseline, for one, already reads straight
+ * from the text and has nothing to cite).
  */
 
 const CONTROL_WORDS = 'link|button|tab|icon|menu item|menu|option|toggle|checkbox|dropdown|card';
@@ -74,6 +83,16 @@ const ENVIRONMENT_WORDS: Record<string, RegExp> = {
   PRODUCTION: /\b(prod|production|live)\b/i,
 };
 
+/**
+ * Whether a cited detail (a route, heading, control label, or evidence phrase) can be
+ * found in the given text — the same check `groundInDocument` applies internally, shared
+ * so a caller re-verifying a previously dropped detail (see `restoreDeclarationSuggestions`
+ * in `flow-suggestions/`) applies it exactly the same way rather than reimplementing it.
+ */
+export function isStatedInDocument(text: string, detail: string): boolean {
+  return has(text, detail) || writtenAsHeading(text, detail) || writtenAsControl(text, detail);
+}
+
 export interface GroundingResult<W extends UntrustedWorkflow> {
   workflow: NormalizedWorkflow<W>;
   /** One warning per detail left out, in words a reviewer can act on. */
@@ -82,39 +101,74 @@ export interface GroundingResult<W extends UntrustedWorkflow> {
 
 export function groundInDocument<W extends UntrustedWorkflow>(workflow: NormalizedWorkflow<W>, text: string | null): GroundingResult<W> {
   const dropped: FlowLanguageIssue[] = [];
-  const drop = (target: string, what: string, why: string) => dropped.push({
+  const drop = (target: string, what: string, why: string, detail: string | undefined, field: FlowLanguageIssue['field'], value?: unknown) => dropped.push({
     code: 'UNSUPPORTED_DETAIL', severity: 'WARNING', target,
     message: `${what} for ${target} was left out: ${why}`,
+    ...(detail ? { detail } : {}),
+    ...(field ? { field } : {}),
+    ...(value !== undefined ? { value } : {}),
+  });
+  const dropTopology = (target: string, what: string, why: string, detail?: string) => dropped.push({
+    code: 'UNSUPPORTED_TOPOLOGY', severity: 'WARNING', target,
+    message: `${what} was removed: ${why}`,
+    ...(detail ? { detail } : {}),
   });
   const source = text ?? '';
   const written = text === null ? new Set<string>() : pathsIn(source);
   const canCheck = text !== null;
   const noText = 'there is no text to check it against.';
 
-  const states = workflow.states.map((state) => {
+  // A cited state/transition that cannot be found at all is a bigger problem than a wrong sub-field: the thing
+  // itself does not belong in the flow. Opt-in (only when the producer attached `evidence`), so a caller that
+  // never cites anything — the no-AI baseline, a hand-authored flow — is unaffected.
+  const keptStates = workflow.states.filter((state) => {
+    const evidence = (state as { evidence?: string }).evidence;
+    if (!canCheck || !evidence) return true;
+    const ok = has(source, evidence) || writtenAsHeading(source, evidence);
+    if (!ok) dropTopology(state.key, `The state ${state.key}`, `its evidence ("${evidence}") does not appear in the document, so the state itself is unsupported.`, evidence);
+    return ok;
+  });
+  const survivingStateKeys = new Set(keptStates.map((state) => state.key));
+
+  const states = keptStates.map((state) => {
     if (!state.recognizer) return state;
     const { routes, headings, texts } = state.recognizer;
-    const keptRoutes = routes.filter((route) => canCheck && written.has(route) ? true : (drop(state.key, `The route ${route}`, canCheck ? 'the document never writes it.' : noText), false));
-    const keptHeadings = headings.filter((heading) => canCheck && writtenAsHeading(source, heading) ? true : (drop(state.key, `The heading “${heading}”`, canCheck ? 'the document never gives the page that heading.' : noText), false));
-    const keptTexts = texts.filter((item) => canCheck && writtenAsHeading(source, item) ? true : (drop(state.key, `The text “${item}”`, canCheck ? 'the document never says it.' : noText), false));
+    const keptRoutes = routes.filter((route) => canCheck && written.has(route) ? true : (drop(state.key, `The route ${route}`, canCheck ? 'the document never writes it.' : noText, route, 'route'), false));
+    const keptHeadings = headings.filter((heading) => canCheck && writtenAsHeading(source, heading) ? true : (drop(state.key, `The heading “${heading}”`, canCheck ? 'the document never gives the page that heading.' : noText, heading, 'heading'), false));
+    const keptTexts = texts.filter((item) => canCheck && writtenAsHeading(source, item) ? true : (drop(state.key, `The text “${item}”`, canCheck ? 'the document never says it.' : noText, item, 'text'), false));
     const { recognizer: _removed, ...rest } = state;
     return keptRoutes.length || keptHeadings.length || keptTexts.length
       ? { ...rest, recognizer: { routes: keptRoutes, headings: keptHeadings, texts: keptTexts } }
       : rest;
   });
 
-  const transitions = workflow.transitions.map((transition) => {
+  const transitions = workflow.transitions
+    .filter((transition) => {
+      const label = `${transition.from} → ${transition.to}`;
+      // An edge left dangling because one of its endpoints was dropped above goes with it — a transition can't
+      // point at a state that no longer exists, and its own evidence (if any) would already have been checked.
+      if (!survivingStateKeys.has(transition.from) || !survivingStateKeys.has(transition.to)) {
+        dropTopology(label, `The transition ${label}`, 'its endpoint was removed as unsupported.');
+        return false;
+      }
+      const evidence = (transition as { evidence?: string }).evidence;
+      if (!canCheck || !evidence) return true;
+      const ok = has(source, evidence) || writtenAsControl(source, evidence);
+      if (!ok) dropTopology(label, `The transition ${label}`, `its evidence ("${evidence}") does not appear in the document, so the transition itself is unsupported.`, evidence);
+      return ok;
+    })
+    .map((transition) => {
     const label = `${transition.from} → ${transition.to}`;
     let next = { ...transition };
     if (transition.control?.label && canCheck && !writtenAsControl(source, transition.control.label)) {
-      drop(label, `The control “${transition.control.label}”`, 'the document does not name it as a button, link or other control.');
+      drop(label, `The control “${transition.control.label}”`, 'the document does not name it as a button, link or other control.', transition.control.label, 'control', transition.control);
       // A test id was a separate claim; without a label to anchor it, it cannot stand alone.
       delete next.control;
     }
     if (transition.effects?.length) {
       const kept = transition.effects.filter((effect) => {
         const ok = canCheck && written.has(effect.route);
-        if (!ok) drop(label, `The request ${effect.method} ${effect.route}`, canCheck ? 'the document never writes that path.' : noText);
+        if (!ok) drop(label, `The request ${effect.method} ${effect.route}`, canCheck ? 'the document never writes that path.' : noText, effect.route, 'effect', effect);
         return ok;
       });
       if (kept.length) next.effects = kept;
@@ -123,7 +177,7 @@ export function groundInDocument<W extends UntrustedWorkflow>(workflow: Normaliz
     if (transition.inputs?.length && canCheck) {
       const kept = transition.inputs.filter((input) => {
         const ok = has(source, input.name) || has(source, input.label ?? '');
-        if (!ok) drop(label, `The input “${input.name}”`, 'the document never mentions that field.');
+        if (!ok) drop(label, `The input “${input.name}”`, 'the document never mentions that field.', input.name, 'input', input);
         return ok;
       });
       if (kept.length) next.inputs = kept;
@@ -136,11 +190,11 @@ export function groundInDocument<W extends UntrustedWorkflow>(workflow: Normaliz
   if (requires) {
     const environments = requires.environments.filter((environment) => {
       const ok = canCheck && ENVIRONMENT_WORDS[environment]?.test(source);
-      if (!ok) drop('the flow', `The environment ${environment.toLowerCase()}`, canCheck ? 'the document never names it.' : noText);
+      if (!ok) drop('the flow', `The environment ${environment.toLowerCase()}`, canCheck ? 'the document never names it.' : noText, environment, 'environment');
       return ok;
     });
     const actor = requires.actor && (!canCheck || has(source, requires.actor)) ? requires.actor : undefined;
-    if (requires.actor && !actor) drop('the flow', `The account ${requires.actor}`, 'the document never mentions it.');
+    if (requires.actor && !actor) drop('the flow', `The account ${requires.actor}`, 'the document never mentions it.', requires.actor, 'actor');
     // What the steps type is added again from the surviving inputs, so a key whose input was dropped goes with it.
     const keys = new Set(transitions.flatMap((transition) => (transition.inputs ?? []).filter((input) => input.role !== 'GENERATED').map((input) => input.dataKey)));
     const data = requires.data.filter((key) => keys.has(key));

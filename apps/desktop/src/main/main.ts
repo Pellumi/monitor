@@ -3175,20 +3175,70 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.saveFlowExport, async (event, input: unknown) => {
     assertTrustedSender(event);
-    const value = input as { filename?: unknown; contentBase64?: unknown };
+    const value = input as {
+      filename?: unknown;
+      contentBase64?: unknown;
+      options?: { render?: unknown; title?: unknown; subtitle?: unknown };
+    };
     if (typeof value.filename !== 'string' || typeof value.contentBase64 !== 'string') throw new Error('INVALID_FLOW_EXPORT_REQUEST');
     const filename = path.basename(value.filename);
     const extension = path.extname(filename).slice(1).toLowerCase();
     const allowed = new Set(['svg', 'png', 'pdf', 'mmd', 'md']);
     if (filename !== value.filename || !allowed.has(extension) || value.contentBase64.length > 40_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
-    const buffer = Buffer.from(value.contentBase64, 'base64');
+    let buffer: Buffer<ArrayBufferLike> = Buffer.from(value.contentBase64, 'base64');
     if (!buffer.length || buffer.length > 30_000_000) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
+    const render = value.options?.render === 'png' || value.options?.render === 'pdf' ? value.options.render : null;
+    if (render && render !== extension) throw new Error('INVALID_FLOW_EXPORT_REQUEST');
     const save = await dialog.showSaveDialog(mainWindow!, {
       title: 'Export Flow diagram',
       defaultPath: path.join(app.getPath('documents'), filename),
       filters: [{ name: `${extension.toUpperCase()} file`, extensions: [extension] }],
     });
     if (save.canceled || !save.filePath) return { cancelled: true };
+
+    if (render) {
+      const svg = buffer.toString('utf8');
+      // Mermaid is rendered with strict security in the renderer. Keep the
+      // print surface independently safe in case a future renderer changes.
+      if (!/^\s*<svg[\s>]/i.test(svg) || /<script\b|\son[a-z]+\s*=|javascript:/i.test(svg)) throw new Error('INVALID_FLOW_EXPORT_SVG');
+      const escapeHtml = (text: string) => text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+      const title = escapeHtml(typeof value.options?.title === 'string' ? value.options.title.slice(0, 240) : 'Tellann Flow');
+      const subtitle = escapeHtml(typeof value.options?.subtitle === 'string' ? value.options.subtitle.slice(0, 240) : '');
+      const html = `<!doctype html>
+<html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: blob:">
+<style>
+  @page { size: A4 landscape; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; margin: 0; }
+  body { display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 18px; padding: 34px; background: #fff; color: #111827; font-family: Arial, sans-serif; }
+  header h1 { margin: 0; font-size: 22px; line-height: 1.2; }
+  header p { margin: 6px 0 0; color: #6b7280; font-size: 12px; }
+  main { display: grid; min-height: 0; place-items: center; overflow: hidden; padding: 24px; border-radius: 8px; background: #0b0d0e; }
+  main svg { width: 100% !important; height: 100% !important; max-width: 100%; max-height: 100%; }
+</style></head><body><header><h1>${title}</h1><p>${subtitle}</p></header><main>${svg}</main></body></html>`;
+      const exportWindow = new BrowserWindow({
+        show: false,
+        width: 1600,
+        height: 1000,
+        backgroundColor: '#ffffff',
+        webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+      });
+      exportWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      try {
+        await exportWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        await exportWindow.webContents.executeJavaScript('document.fonts.ready.then(() => true)');
+        buffer = render === 'pdf'
+          ? await exportWindow.webContents.printToPDF({ landscape: true, pageSize: 'A4', printBackground: true })
+          : (await exportWindow.webContents.capturePage()).toPNG();
+      } finally {
+        if (!exportWindow.isDestroyed()) exportWindow.destroy();
+      }
+    }
     await fs.writeFile(save.filePath, buffer);
     return { cancelled: false, filePath: save.filePath, filename: path.basename(save.filePath) };
   });

@@ -342,6 +342,9 @@ function normalizedSuggestionType(type: string): SuggestionType {
     MISSING_EMPTY_STATE: SuggestionType.EMPTY_STATE,
     MISSING_LOADING_STATE: SuggestionType.LOADING_STATE,
     BUSINESS_RULE: SuggestionType.BUSINESS_RULE,
+    MISSING_DOCUMENTED_STEP: SuggestionType.MISSING_DOCUMENTED_STEP,
+    RESTORE_DECLARATION: SuggestionType.RESTORE_DECLARATION,
+    AMBIGUOUS_BRANCH: SuggestionType.AMBIGUOUS_BRANCH,
   };
   return map[type] ?? SuggestionType.BUSINESS_RULE;
 }
@@ -2505,7 +2508,7 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
       key: node.behaviorKey || node.stateName, name: node.stateName, category: node.category,
       role: node.role, terminalKind: node.terminalKind,
     }));
-    const transitions = graph.edges.map((edge) => ({ from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action || undefined }));
+    const transitions = graph.edges.map((edge) => ({ from: edge.fromNode.stateName, to: edge.toNode.stateName, action: edge.action || undefined, condition: edge.condition || undefined }));
     const currentValidation = validateFlow(graph.nodes as any, graph.edges as any);
     const reviewStage = trigger === 'FLOW_REVIEW_REQUESTED' && !currentValidation.valid ? 'CONNECTION_REPAIR' : trigger === 'FLOW_REVIEW_REQUESTED' ? 'ENRICHMENT' : 'GAP_REVIEW';
     const ruleSuggestions = await suggestFlowGaps({ domainKey, currentGraph: { states, transitions }, rulesets });
@@ -2523,8 +2526,31 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     const aiAccess = await requireAiAccess(appId, 'experimentalAiFlowSuggestions');
     const includeAi = req.body.includeAi !== false && aiAccess.allowed;
     const reviewId = trigger === 'FLOW_REVIEW_REQUESTED' ? crypto.randomUUID() : undefined;
+
+    // A flow generated from a document keeps the document's filename and what generation
+    // left out (`aiDraftIssues`). Re-attaching the document's text lets suggestions spot a
+    // documented step the flow is missing (MISSING_DOCUMENTED_STEP), and re-check what was
+    // dropped for lack of checkable text at the time (RESTORE_DECLARATION) — see
+    // `localRuleSuggestions` in `packages/ai/src/flow-suggestions/generate-flow-suggestions.ts`.
+    let sourceDocumentExcerpt: string | undefined;
+    const draftIssues = graph.aiDraftIssues as { leftOut?: unknown[]; structuralIssues?: unknown[] } | null;
+    const droppedDeclarations = Array.isArray(draftIssues?.leftOut) ? draftIssues!.leftOut as any[] : undefined;
+    if (graph.aiDraftSourceName) {
+      const sourceDocument = await prisma.sourceDocument.findFirst({
+        where: { applicationId: appId, filename: graph.aiDraftSourceName },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (sourceDocument) {
+        const segments = await prisma.intentEvidence.findMany({
+          where: { sourceDocumentId: sourceDocument.id }, orderBy: { createdAt: 'asc' }, take: 250,
+        });
+        if (segments.length) sourceDocumentExcerpt = segments.map((segment) => segment.excerpt ?? '').join('\n\n').slice(0, 20_000);
+      }
+    }
+
     const result = await generateFlowSuggestions({
       applicationId: appId, organizationId, applicationDomain: domainKey,
+      sourceDocumentExcerpt, droppedDeclarations,
       declaredFlows: [{
         flowId, name: graph.name, purpose: graph.purpose, scopeStatement: graph.scopeStatement,
         workflowType: graph.workflowType, states, transitions,
@@ -2591,11 +2617,19 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
     const persisted = [];
     for (const item of generatedSuggestions) {
       const patch = suggestionPatch(item);
-      if (patch.states.length === 0 && patch.transitions.length === 0) continue;
-      if (patch.states.length > 0 && patch.transitions.length === 0 && patch.states.every((state) => existingStateNames.has(state.name))) continue;
-      const knownNames = new Set([...existingStateNames, ...patch.states.map((state) => state.name)]);
-      if (patch.transitions.some((transition) => !knownNames.has(transition.from) || !knownNames.has(transition.to))) continue;
-      const dedupeKey = semanticSuggestionKey(item.type, patch, item.targetNodeId);
+      // RESTORE_DECLARATION (re-attach a field already on an existing state/transition)
+      // and AMBIGUOUS_BRANCH (flags existing transitions, proposes none) legitimately
+      // have no states/transitions patch — they are not a topology addition.
+      const isPatchless = item.type === 'RESTORE_DECLARATION' || item.type === 'AMBIGUOUS_BRANCH';
+      if (!isPatchless) {
+        if (patch.states.length === 0 && patch.transitions.length === 0) continue;
+        if (patch.states.length > 0 && patch.transitions.length === 0 && patch.states.every((state) => existingStateNames.has(state.name))) continue;
+        const knownNames = new Set([...existingStateNames, ...patch.states.map((state) => state.name)]);
+        if (patch.transitions.some((transition) => !knownNames.has(transition.from) || !knownNames.has(transition.to))) continue;
+      }
+      const restoreDeclaration = (item as any).restoreDeclaration as { targetKind: string; target: string; detail: string; code: string } | undefined;
+      const focus = restoreDeclaration ? `${restoreDeclaration.target}:${restoreDeclaration.detail}` : item.targetNodeId;
+      const dedupeKey = semanticSuggestionKey(item.type, patch, focus);
       if (!reviewId && queuedDedupeKeys.has(dedupeKey)) continue;
       queuedDedupeKeys.add(dedupeKey);
       const record = await prisma.declaredStateSuggestion.upsert({
@@ -2605,11 +2639,12 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
           parentStateId: graph.nodes.find((node) => node.stateName === normalizeKeyForSuggestion(item.targetNodeId))?.id ?? null,
           organizationId, applicationId: appId, flowId, suggestionType: normalizedSuggestionType(item.type),
           title: item.title, description: item.description,
-          suggestedStateName: patch.states[0]?.name ?? patch.transitions[0]?.to ?? patch.transitions[0]?.from ?? 'FLOW_TRANSITION',
+          suggestedStateName: patch.states[0]?.name ?? patch.transitions[0]?.to ?? patch.transitions[0]?.from ?? item.targetNodeId ?? 'FLOW_TRANSITION',
           category: patch.states[0]?.category ?? 'BUSINESS', severity: item.severity as any,
           sourceTier: item.sources.join('+'), rationale: item.rationale,
           suggestedStatesJson: patch.states as any, suggestedTransitionsJson: patch.transitions as any,
           evidenceJson: item.evidence as any,
+          ...(restoreDeclaration ? { restoreDeclarationJson: restoreDeclaration as any } : {}),
           source: item.sources.includes('AI_ASSISTED') && item.sources.includes('RULE_BASED')
             ? SuggestionSource.HYBRID
             : item.sources.includes('AI_ASSISTED') ? SuggestionSource.AI : SuggestionSource.RULE_ENGINE,
@@ -2908,6 +2943,38 @@ app.get('/applications/:id/declared-flow/:flowId', async (req: Request, res: Res
     res.json(responseData);
   } catch (err) {
     console.error('[FDRS] Get behavior graph error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// A flow generated from a document remembers the document's filename
+// (`aiDraftSourceName`) but not the document itself — this is the read side of what
+// `generateFlowFromDocument` saw: the same text segments it could cite against, so a
+// reviewer can check the graph against the source without re-opening the original file.
+// See `extractAndPersistEvidence` in services/onboarding-api/src/document-routes.ts,
+// which is what populates these IntentEvidence rows in the first place.
+app.get('/applications/:id/declared-flow/:flowId/source-segments', async (req: Request, res: Response) => {
+  const { id: applicationId, flowId } = req.params;
+  try {
+    const graph = await prisma.behaviorGraph.findFirst({ where: { id: flowId, applicationId }, select: { aiDraftSourceName: true } });
+    if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
+    if (!graph.aiDraftSourceName) return res.json({ sourceName: null, segments: [] });
+
+    const sourceDocument = await prisma.sourceDocument.findFirst({
+      where: { applicationId, filename: graph.aiDraftSourceName },
+      orderBy: { updatedAt: 'desc' },
+    });
+    if (!sourceDocument) return res.json({ sourceName: graph.aiDraftSourceName, segments: [] });
+
+    const segments = await prisma.intentEvidence.findMany({
+      where: { sourceDocumentId: sourceDocument.id },
+      orderBy: { createdAt: 'asc' },
+      take: 250,
+      select: { id: true, sourceLabel: true, excerpt: true, locator: true },
+    });
+    res.json({ sourceName: graph.aiDraftSourceName, segments });
+  } catch (err) {
+    console.error('[FDRS] Get source segments error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -3647,6 +3714,113 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
     });
     if (!graph) return res.status(404).json({ error: 'Behavior graph not found' });
     if (graph.lifecycleStatus !== 'DRAFT') return res.status(409).json({ error: 'PUBLISHED_FLOW_IMMUTABLE' });
+
+    // RESTORE_DECLARATION re-attaches a detail document-generation dropped — it proposes
+    // no new state or transition, so it does not go through the states/transitions patch
+    // flow below at all. `field` (added alongside `flow-grounding.ts`'s drop() calls) says
+    // exactly which part of the state/transition/flow this belongs to, so restoration
+    // writes the real field precisely rather than guessing. A suggestion persisted before
+    // `field` existed falls back to the old heuristic (a state's `recognizer.texts`, or an
+    // empty transition `control.label`) so it is still actionable, not stuck forever.
+    if (suggestion.suggestionType === 'RESTORE_DECLARATION' && suggestion.restoreDeclarationJson) {
+      const restore = suggestion.restoreDeclarationJson as {
+        targetKind: 'STATE' | 'TRANSITION' | 'FLOW'; target: string; detail: string;
+        field?: 'route' | 'heading' | 'text' | 'control' | 'input' | 'effect' | 'environment' | 'actor';
+        value?: unknown;
+      };
+      let mutated = false;
+      let skippedReason: string | undefined;
+      await prisma.$transaction(async (tx) => {
+        await ensureDraftBaseline(tx, flowId, graph.version, graph.nodes, graph.edges);
+
+        const node = restore.targetKind === 'STATE'
+          ? graph.nodes.find((candidate) => candidate.stateName === normalizeKeyForSuggestion(restore.target))
+          : undefined;
+        const edge = restore.targetKind === 'TRANSITION'
+          ? (() => {
+              const [fromName, toName] = restore.target.split('→').map((part) => normalizeKeyForSuggestion(part.trim()));
+              return graph.edges.find((candidate) => candidate.fromNode.stateName === fromName && candidate.toNode.stateName === toName);
+            })()
+          : undefined;
+
+        const recognizerOf = (n: typeof graph.nodes[number]) => (n.recognizer as { routes?: string[]; headings?: string[]; texts?: string[] } | null) ?? { routes: [], headings: [], texts: [] };
+        const addRecognizerItem = async (bucket: 'routes' | 'headings' | 'texts', value: string) => {
+          if (!node) { skippedReason = `No state named "${restore.target}" exists anymore.`; return; }
+          const recognizer = recognizerOf(node);
+          if ((recognizer[bucket] ?? []).includes(value)) { skippedReason = 'Already present.'; return; }
+          await tx.behaviorGraphNode.update({ where: { id: node.id }, data: { recognizer: { routes: recognizer.routes ?? [], headings: recognizer.headings ?? [], texts: recognizer.texts ?? [], [bucket]: [...(recognizer[bucket] ?? []), value] } as any } });
+          mutated = true;
+        };
+
+        switch (restore.field) {
+          case 'route': await addRecognizerItem('routes', restore.detail); break;
+          case 'heading': await addRecognizerItem('headings', restore.detail); break;
+          case 'text': await addRecognizerItem('texts', restore.detail); break;
+          case 'control': {
+            if (!edge) { skippedReason = `No transition "${restore.target}" exists anymore.`; break; }
+            const current = edge.control as { label?: string } | null;
+            if (current?.label) { skippedReason = `Already has a control ("${current.label}") — not overwritten.`; break; }
+            await tx.behaviorGraphEdge.update({ where: { id: edge.id }, data: { control: (restore.value ?? { label: restore.detail }) as any } });
+            mutated = true;
+            break;
+          }
+          case 'input': {
+            if (!edge) { skippedReason = `No transition "${restore.target}" exists anymore.`; break; }
+            const inputs = (edge.expectedInput as Array<{ name: string; dataKey: string }> | null) ?? [];
+            const next = restore.value as { name: string; dataKey: string } | undefined;
+            if (!next) { skippedReason = 'No structured value to restore.'; break; }
+            if (inputs.some((input) => input.name === next.name && input.dataKey === next.dataKey)) { skippedReason = 'Already present.'; break; }
+            await tx.behaviorGraphEdge.update({ where: { id: edge.id }, data: { expectedInput: [...inputs, next] as any } });
+            mutated = true;
+            break;
+          }
+          case 'effect': {
+            if (!edge) { skippedReason = `No transition "${restore.target}" exists anymore.`; break; }
+            const effects = (edge.expectedOutput as Array<{ method: string; route: string }> | null) ?? [];
+            const next = restore.value as { method: string; route: string } | undefined;
+            if (!next) { skippedReason = 'No structured value to restore.'; break; }
+            if (effects.some((effect) => effect.method === next.method && effect.route === next.route)) { skippedReason = 'Already present.'; break; }
+            await tx.behaviorGraphEdge.update({ where: { id: edge.id }, data: { expectedOutput: [...effects, next] as any } });
+            mutated = true;
+            break;
+          }
+          case 'environment': {
+            const requires = (graph.requires as { actor?: string; environments?: string[]; data?: string[] } | null) ?? { environments: [], data: [] };
+            if ((requires.environments ?? []).includes(restore.detail)) { skippedReason = 'Already present.'; break; }
+            await tx.behaviorGraph.update({ where: { id: flowId }, data: { requires: { ...requires, environments: [...(requires.environments ?? []), restore.detail] } as any } });
+            mutated = true;
+            break;
+          }
+          case 'actor': {
+            const requires = (graph.requires as { actor?: string; environments?: string[]; data?: string[] } | null) ?? { environments: [], data: [] };
+            if (requires.actor) { skippedReason = `Already requires actor "${requires.actor}" — not overwritten.`; break; }
+            await tx.behaviorGraph.update({ where: { id: flowId }, data: { requires: { ...requires, actor: restore.detail } as any } });
+            mutated = true;
+            break;
+          }
+          default: {
+            // Pre-`field` suggestion: fall back to the original heuristic.
+            if (node) await addRecognizerItem('texts', restore.detail);
+            else if (edge && !(edge.control as { label?: string } | null)?.label) {
+              await tx.behaviorGraphEdge.update({ where: { id: edge.id }, data: { control: { label: restore.detail } as any } });
+              mutated = true;
+            } else skippedReason = 'Nothing to restore this onto.';
+          }
+        }
+
+        if (mutated) {
+          const updatedGraph = await tx.behaviorGraph.update({ where: { id: flowId }, data: { draftSeq: { increment: 1 } } });
+          const nextNodes = await tx.behaviorGraphNode.findMany({ where: { graphId: flowId } });
+          const nextEdges = await tx.behaviorGraphEdge.findMany({ where: { graphId: flowId }, include: { fromNode: true, toNode: true } });
+          await writeDraftSnapshot(tx, flowId, graph.version, updatedGraph.draftSeq, `Accepted: ${suggestion.title ?? 'Restore declaration'}`, nextNodes, nextEdges, (req as AuthenticatedRequest).user?.id ?? null);
+        }
+        await tx.declaredStateSuggestion.update({ where: { id: suggestionId }, data: { status: 'ACCEPTED', acceptedAt: new Date(), acceptedBy: (req as AuthenticatedRequest).user?.id ?? null } });
+      });
+      // `applied: false` with a reason, not a plain checkmark — accepting still records the
+      // reviewer's decision (so the suggestion doesn't keep resurfacing), but the UI should
+      // show it did not change the graph rather than imply a silent success.
+      return res.json({ success: true, data: { suggestionId, applied: mutated, ...(!mutated && skippedReason ? { skippedReason } : {}) } });
+    }
     // Queued suggestions are no longer bound to a single graph revision: a
     // suggestion generated before an earlier accept is still applied here, and is
     // only refused (422 below, via validateGeneratedGraph) if it genuinely no

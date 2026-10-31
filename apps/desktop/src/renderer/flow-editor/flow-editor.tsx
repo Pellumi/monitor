@@ -8,6 +8,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Background,
   BackgroundVariant,
@@ -255,6 +256,7 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
   const [placement, setPlacement] = useState<Placement | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   const editable = flowIsEditable(flow);
   const proposed = (flow as { aiDraftStatus?: string | null } | null)?.aiDraftStatus === 'PENDING_REVIEW';
@@ -1083,7 +1085,33 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
         />
       ) : null}
       {exportOpen ? (
-        <FlowExportDialog applicationId={projectId} flow={flow} onClose={() => setExportOpen(false)} />
+        <FlowExportDialog
+          applicationId={projectId}
+          flow={flow}
+          onClose={() => setExportOpen(false)}
+          onSaved={setExportNotice}
+        />
+      ) : null}
+      {exportNotice ? createPortal(
+        <div className="notification-toaster flow-export-app-toast" role="region" aria-label="Export notifications">
+          <div className="notification-toast severity-success" role="status" aria-live="polite" aria-atomic="true">
+            <CircleCheck size={16} aria-hidden="true" />
+            <div className="notification-toast-body">
+              <strong>Diagram saved</strong>
+              <span>{exportNotice}</span>
+            </div>
+            <button
+              type="button"
+              className="notification-toast-close"
+              aria-label="Dismiss saved notification"
+              title="Dismiss"
+              onClick={() => setExportNotice(null)}
+            >
+              <X size={14} />
+            </button>
+          </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );

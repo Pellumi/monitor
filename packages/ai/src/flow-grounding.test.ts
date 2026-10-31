@@ -107,6 +107,58 @@ describe('groundInDocument keeps what the document really says', () => {
   });
 });
 
+describe('topology grounding: a state or transition cited but not found is dropped entirely', () => {
+  const text = 'The user lands on the login page. They click Sign in, which takes them to the dashboard.';
+  const flow = (extra: { stateEvidence?: string; transitionEvidence?: string }) => normalizeWorkflowLanguage({
+    key: 'W', name: 'W',
+    states: [
+      { name: 'GUEST' },
+      { name: 'LOGIN_PAGE' },
+      { name: 'DASHBOARD', evidence: extra.stateEvidence },
+    ],
+    transitions: [
+      { from: 'GUEST', to: 'LOGIN_PAGE', action: 'OPEN_APP' },
+      { from: 'LOGIN_PAGE', to: 'DASHBOARD', action: 'CLICK_SIGN_IN', evidence: extra.transitionEvidence },
+    ],
+  });
+
+  it('keeps a state and transition whose evidence is actually written', () => {
+    const { workflow, dropped } = groundInDocument(flow({ stateEvidence: 'the dashboard', transitionEvidence: 'click Sign in' }), text);
+    expect(workflow.states.map((state) => state.key)).toEqual(['GUEST', 'LOGIN_PAGE', 'DASHBOARD']);
+    expect(workflow.transitions).toHaveLength(2);
+    expect(dropped).toEqual([]);
+  });
+
+  it('drops a state whose cited evidence is not in the text, and the transitions left dangling by it', () => {
+    const { workflow, dropped } = groundInDocument(flow({ stateEvidence: 'the billing portal', transitionEvidence: 'click Sign in' }), text);
+    expect(workflow.states.map((state) => state.key)).toEqual(['GUEST', 'LOGIN_PAGE']);
+    expect(workflow.transitions).toHaveLength(1);
+    expect(dropped.some((issue) => issue.code === 'UNSUPPORTED_TOPOLOGY' && issue.target === 'DASHBOARD')).toBe(true);
+    expect(dropped.some((issue) => issue.message.includes('endpoint was removed'))).toBe(true);
+  });
+
+  it('drops a transition whose cited evidence is not in the text, leaving both endpoint states', () => {
+    const { workflow, dropped } = groundInDocument(flow({ stateEvidence: 'the dashboard', transitionEvidence: 'press the rocket button' }), text);
+    expect(workflow.states.map((state) => state.key)).toEqual(['GUEST', 'LOGIN_PAGE', 'DASHBOARD']);
+    expect(workflow.transitions).toHaveLength(1);
+    expect(dropped.some((issue) => issue.code === 'UNSUPPORTED_TOPOLOGY' && issue.target === 'LOGIN_PAGE → DASHBOARD')).toBe(true);
+  });
+
+  it('is opt-in: a state or transition with no evidence is never dropped by this check', () => {
+    const { workflow, dropped } = groundInDocument(flow({}), text);
+    expect(workflow.states).toHaveLength(3);
+    expect(workflow.transitions).toHaveLength(2);
+    expect(dropped).toEqual([]);
+  });
+
+  it('with no text to check against, keeps everything regardless of evidence', () => {
+    const { workflow, dropped } = groundInDocument(flow({ stateEvidence: 'the billing portal', transitionEvidence: 'press the rocket button' }), null);
+    expect(workflow.states).toHaveLength(3);
+    expect(workflow.transitions).toHaveLength(2);
+    expect(dropped).toEqual([]);
+  });
+});
+
 describe('what counts as a heading', () => {
   const flow = (heading: string) => normalizeWorkflowLanguage({
     key: 'W', name: 'W',

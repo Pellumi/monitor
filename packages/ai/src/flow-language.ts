@@ -47,6 +47,8 @@ export interface LanguageState {
   recognizer?: StateRecognizer;
   /** Another flow used here in place of drawing its states again. */
   subFlow?: SubFlowRef;
+  /** A short phrase copied from the source document that says this state exists. See `flow-grounding.ts`. */
+  evidence?: string;
   [extra: string]: unknown;
 }
 
@@ -63,6 +65,8 @@ export interface LanguageTransition {
   effects?: TransitionEffect[];
   /** Absent means AUTO. */
   mode?: StepMode;
+  /** A short phrase copied from the source document that says this transition happens. See `flow-grounding.ts`. */
+  evidence?: string;
   [extra: string]: unknown;
 }
 
@@ -91,6 +95,7 @@ export interface UntrustedState {
   actor?: string;
   recognizer?: unknown;
   subFlow?: unknown;
+  evidence?: unknown;
   [extra: string]: unknown;
 }
 
@@ -103,6 +108,7 @@ export interface UntrustedTransition {
   inputs?: unknown;
   effects?: unknown;
   mode?: unknown;
+  evidence?: unknown;
   [extra: string]: unknown;
 }
 
@@ -126,10 +132,27 @@ export interface FlowLanguageIssue {
     | 'UNREACHABLE_STATE'
     | 'DEAD_END_STATE'
     /** A declared detail (a route, a control, a request) the source text does not support, so it was left out. */
-    | 'UNSUPPORTED_DETAIL';
+    | 'UNSUPPORTED_DETAIL'
+    /** A whole state or transition whose own cited evidence does not appear in the source text, so it was removed. */
+    | 'UNSUPPORTED_TOPOLOGY';
   severity: 'WARNING' | 'ERROR';
   message: string;
   target?: string;
+  /** For UNSUPPORTED_DETAIL/UNSUPPORTED_TOPOLOGY: the literal cited value, so it can be re-checked later without re-parsing `message`. */
+  detail?: string;
+  /**
+   * For UNSUPPORTED_DETAIL: which field this detail came from, so a later restore knows
+   * exactly where to put it back — `recognizer.routes` for a state's "route", the flow's
+   * `requires.actor` for "actor", and so on — instead of guessing from `message` text.
+   */
+  field?: 'route' | 'heading' | 'text' | 'control' | 'input' | 'effect' | 'environment' | 'actor';
+  /**
+   * For UNSUPPORTED_DETAIL: the structured value to restore, when it is richer than
+   * `detail` alone (a control's role and label, an effect's method/route/status, an
+   * input's dataKey and role). Absent for a field whose value is just `detail` itself
+   * (route, heading, text, environment, actor).
+   */
+  value?: unknown;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -367,7 +390,8 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
     const wasSentence = toSnakeKey(source) !== key && !isCompactKey(toSnakeKey(source));
     const recognizer = sanitizeRecognizer(state.recognizer);
     const subFlow = sanitizeSubFlow(state.subFlow);
-    const { recognizer: _recognizer, subFlow: _subFlow, ...rest } = state;
+    const evidence = clip(state.evidence, 200);
+    const { recognizer: _recognizer, subFlow: _subFlow, evidence: _evidence, ...rest } = state;
     return {
       ...rest,
       key,
@@ -377,6 +401,7 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
       description: clip(state.description, 240) ?? (wasSentence ? clip(source, 240) : undefined),
       ...(recognizer ? { recognizer } : {}),
       ...(subFlow ? { subFlow } : {}),
+      ...(evidence ? { evidence } : {}),
     };
   });
 
@@ -397,7 +422,8 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
     const effects = sanitizeEffects(transition.effects);
     // A step the person marked is kept as marked; only an unmarked one is judged.
     const mode = sanitizeMode(transition.mode) ?? inferStepMode({ action, control, effects });
-    const { control: _control, inputs: _inputs, effects: _effects, mode: _mode, ...rest } = transition;
+    const evidence = clip(transition.evidence, 200);
+    const { control: _control, inputs: _inputs, effects: _effects, mode: _mode, evidence: _evidence, ...rest } = transition;
     transitions.push({
       ...rest, from, to, action,
       ...(condition ? { condition } : {}),
@@ -405,6 +431,7 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
       ...(inputs.length ? { inputs } : {}),
       ...(effects.length ? { effects } : {}),
       ...(mode !== 'AUTO' ? { mode } : {}),
+      ...(evidence ? { evidence } : {}),
     });
   }
 
