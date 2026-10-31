@@ -1,6 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow, type FlowEdgeInput, type FlowNodeInput } from './flow-domain';
+import {
+  createConnectivityRepairTransitions,
+  createFlowDiagrams,
+  createInitialStateRepair,
+  reduceSuggestionPatchAgainstGraph,
+  templateSeedStates,
+  validateFlow,
+  type FlowEdgeInput,
+  type FlowNodeInput,
+} from './flow-domain';
 import { getDomainTemplate, type DomainTemplate } from '@tellann/rules';
 
 const authFlow: { states: FlowNodeInput[]; transitions: FlowEdgeInput[]; [key: string]: unknown } = {
@@ -76,6 +85,91 @@ test('creates a transition repair that makes every existing state reachable', ()
   const repaired = [...transitions, ...repairs.map((edge, index) => ({ id: `repair-${index}`, fromNodeId: states.find((node) => node.stateName === edge.from)!.id, toNodeId: states.find((node) => node.stateName === edge.to)!.id }))];
   assert.equal(validateFlow(states, repaired).valid, true);
   assert.deepEqual(repairs.map((edge) => [edge.from, edge.to]), [['DETAILS', 'PAYMENT'], ['PAYMENT', 'DONE']]);
+});
+
+test('keeps only the novel part of a partially stale suggestion patch', () => {
+  const patch = reduceSuggestionPatchAgainstGraph(
+    {
+      states: [{ name: 'SUBSCRIPTION_CHECK_PAGE', category: 'BUSINESS', role: 'NORMAL' }],
+      transitions: [
+        { from: 'PLAN_GENERATION_LOADING_PAGE', to: 'SUBSCRIPTION_CHECK_PAGE', action: 'CHECK_SUBSCRIPTION' },
+        { from: 'SUBSCRIPTION_CHECK_PAGE', to: 'FINAL_PLAN_GENERATION_PROCESSING', action: 'PROCEED_GENERATION' },
+      ],
+    },
+    [
+      { name: 'PLAN_GENERATION_LOADING_PAGE', category: 'UI' },
+      { name: 'SUBSCRIPTION_CHECK_PAGE', category: 'BUSINESS' },
+      { name: 'FINAL_PLAN_GENERATION_PROCESSING', category: 'SYSTEM' },
+    ],
+    [{ from: 'PLAN_GENERATION_LOADING_PAGE', to: 'SUBSCRIPTION_CHECK_PAGE', action: 'CHECK_SUBSCRIPTION' }],
+  );
+
+  assert.deepEqual(patch.states, []);
+  assert.deepEqual(patch.transitions, [
+    { from: 'SUBSCRIPTION_CHECK_PAGE', to: 'FINAL_PLAN_GENERATION_PROCESSING', action: 'PROCEED_GENERATION' },
+  ]);
+});
+
+test('does not hide a genuinely missing suggestion endpoint', () => {
+  const patch = reduceSuggestionPatchAgainstGraph(
+    {
+      states: [],
+      transitions: [{ from: 'KNOWN', to: 'MISSING', action: 'CONTINUE' }],
+    },
+    [{ name: 'KNOWN', category: 'UI' }],
+    [],
+  );
+  assert.deepEqual(patch.transitions, [{ from: 'KNOWN', to: 'MISSING', action: 'CONTINUE' }]);
+});
+
+test('proposes one stable initial entry state and makes a zero-initial graph repairable', () => {
+  const states: FlowNodeInput[] = [
+    { id: 'upload', stateName: 'UPLOAD_STUDY_MATERIALS_PAGE', role: 'NORMAL' },
+    { id: 'date', stateName: 'DATE_TIME_PAGE', role: 'NORMAL' },
+    { id: 'done', stateName: 'GENERATED_PLAN_VIEW', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+  ];
+  const edges: FlowEdgeInput[] = [
+    { id: 'upload-date', fromNodeId: 'upload', toNodeId: 'date', action: 'CLICK_NEXT' },
+  ];
+  const repair = createInitialStateRepair('First-Time Exam Prep Plan Setup', states, edges);
+  assert.ok(repair);
+  assert.equal(repair.state.stateName, 'FIRST_TIME_EXAM_PREP_PLAN_SETUP_START');
+  assert.equal(repair.state.role, 'INITIAL');
+  assert.equal(repair.state.category, 'SYSTEM');
+  assert.equal(repair.transition.toNodeId, 'upload');
+
+  const prospectiveStates = [repair.state, ...states];
+  const prospectiveEdges = [repair.transition, ...edges];
+  const connectivity = createConnectivityRepairTransitions(prospectiveStates, prospectiveEdges);
+  const byName = new Map(prospectiveStates.map((state) => [state.stateName, state.id]));
+  const completeEdges = [
+    ...prospectiveEdges,
+    ...connectivity.map((edge, index) => ({
+      id: `connect-${index}`,
+      fromNodeId: byName.get(edge.from)!,
+      toNodeId: byName.get(edge.to)!,
+      action: edge.action,
+    })),
+  ];
+  assert.equal(validateFlow(prospectiveStates, completeEdges).valid, true);
+  assert.equal(createInitialStateRepair('First-Time Exam Prep Plan Setup', prospectiveStates, completeEdges), null);
+});
+
+test('chooses the root that reaches the largest existing branch regardless of row order', () => {
+  const states: FlowNodeInput[] = [
+    { id: 'secondary', stateName: 'SECONDARY_ROOT', role: 'NORMAL' },
+    { id: 'primary', stateName: 'PRIMARY_ROOT', role: 'NORMAL' },
+    { id: 'middle', stateName: 'PRIMARY_MIDDLE', role: 'NORMAL' },
+    { id: 'done', stateName: 'DONE', role: 'TERMINAL', terminalKind: 'SUCCESS' },
+  ];
+  const edges: FlowEdgeInput[] = [
+    { id: 'primary-middle', fromNodeId: 'primary', toNodeId: 'middle' },
+    { id: 'middle-done', fromNodeId: 'middle', toNodeId: 'done' },
+  ];
+
+  const repair = createInitialStateRepair('Ranked roots', states, edges);
+  assert.ok(repair);
+  assert.equal(repair.transition.toNodeId, 'primary');
 });
 
 // Mirrors what POST /v1/applications/:appId/flows writes when a starting-point

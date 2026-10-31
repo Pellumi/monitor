@@ -415,7 +415,6 @@ function suggestionSource(source: string | undefined) {
 export function SuggestionsPanel({
   editable,
   stateCount,
-  states,
   sourceAvailable,
   suggestions,
   meta,
@@ -430,7 +429,6 @@ export function SuggestionsPanel({
 }: {
   editable: boolean;
   stateCount: number;
-  states: FlowState[];
   sourceAvailable: boolean;
   suggestions: DeclaredStateSuggestion[];
   meta: FlowSuggestionMeta | null;
@@ -449,25 +447,17 @@ export function SuggestionsPanel({
     loading: boolean;
     previewLoading: boolean;
     applying: boolean;
-    resolvingInitial: boolean;
     notice: string | null;
     request(): void;
     toggle(suggestionId: string): void;
     apply(): void;
     decline(): void;
-    resolveInitialState(stateId: string): void;
   };
 }) {
   const initialStateIssue = review.preview?.validation.issues.find((issue) => issue.code === 'FLOW_INITIAL_STATE_COUNT');
-  const reviewBusy = review.applying || review.resolvingInitial;
-  const [initialStateId, setInitialStateId] = useState('');
-  useEffect(() => {
-    if (!initialStateIssue) {
-      setInitialStateId('');
-      return;
-    }
-    setInitialStateId((current) => states.some((state) => state.id === current) ? current : '');
-  }, [initialStateIssue, states]);
+  const missingInitialStateIssue = initialStateIssue && /found 0\b/.test(initialStateIssue.message) ? initialStateIssue : null;
+  const multipleInitialStatesIssue = initialStateIssue && !missingInitialStateIssue ? initialStateIssue : null;
+  const reviewBusy = review.applying || review.loading;
 
   const planNote = meta?.mode === 'RULE_ONLY' && !meta.aiAllowed
     ? 'Rule-guided. Local and Solo plans add AI analysis.'
@@ -629,12 +619,12 @@ export function SuggestionsPanel({
                 ))}
               </ul>
             ) : null}
-            {initialStateIssue ? (
+            {missingInitialStateIssue ? (
               <div className="flow-review-resolution" role="group" aria-labelledby="flow-initial-resolution-title">
                 <div>
-                  <strong id="flow-initial-resolution-title">Choose the starting state</strong>
+                  <strong id="flow-initial-resolution-title">Tellann will create the starting state</strong>
                   <p>
-                    Review the current flow and its source first, then choose the first state a user encounters. Tellann will mark it as the only initial state and recheck these proposals.
+                    The selected proposals do not include an initial entry. Review the current flow and its source first, then ask Tellann to regenerate a complete review with a new starting state without changing the meaning of any existing state.
                   </p>
                 </div>
                 <div className="flow-actions flow-review-navigation">
@@ -647,24 +637,26 @@ export function SuggestionsPanel({
                     </button>
                   ) : null}
                 </div>
-                <label className="flow-field">
-                  Starting state
-                  <SelectField
-                    value={initialStateId}
-                    onValueChange={setInitialStateId}
-                    options={states.map((state) => ({ value: state.id, label: state.stateName }))}
-                    placeholder="Choose the first state…"
-                    ariaLabel="Starting state"
-                    disabled={reviewBusy}
-                  />
-                </label>
                 <button
                   className="button primary"
                   type="button"
-                  disabled={!initialStateId || reviewBusy}
-                  onClick={() => review.resolveInitialState(initialStateId)}
+                  disabled={reviewBusy}
+                  onClick={review.request}
                 >
-                  {review.resolvingInitial ? 'Rechecking…' : 'Set as initial and recheck'}
+                  {review.loading ? 'Creating proposal…' : 'Create starting-state proposal'}
+                </button>
+              </div>
+            ) : null}
+            {multipleInitialStatesIssue ? (
+              <div className="flow-review-resolution" role="group" aria-labelledby="flow-multiple-initial-resolution-title">
+                <div>
+                  <strong id="flow-multiple-initial-resolution-title">Review the starting states</strong>
+                  <p>
+                    This Flow already has more than one initial state, so Tellann will not add another. Review them in Build and keep the one true entry state before applying these proposals.
+                  </p>
+                </div>
+                <button className="button" type="button" disabled={reviewBusy} onClick={onReviewFlow}>
+                  Review current flow
                 </button>
               </div>
             ) : null}

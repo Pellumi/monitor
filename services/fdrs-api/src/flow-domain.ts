@@ -4,6 +4,7 @@ export type FlowNodeInput = {
   id: string;
   stateName: string;
   behaviorKey?: string | null;
+  category?: string | null;
   role?: 'NORMAL' | 'INITIAL' | 'TERMINAL';
   terminalKind?: 'SUCCESS' | 'FAILURE' | 'CANCELLATION' | 'ALTERNATE' | null;
   actor?: string | null;
@@ -42,6 +43,94 @@ export type FlowDiagramProjection = {
   semanticNodeIds: string[];
   semanticEdgeIds: string[];
 };
+
+export type SuggestionPatch = {
+  states: Array<{ name: string; category: string; role?: string; terminalKind?: string | null }>;
+  transitions: Array<{ from: string; to: string; action?: string }>;
+};
+
+const normalizedPatchToken = (value: unknown) => String(value ?? '')
+  .trim()
+  .replace(/([a-z])([A-Z])/g, '$1_$2')
+  .replace(/[^a-zA-Z0-9]+/g, '_')
+  .replace(/^_+|_+$/g, '')
+  .toUpperCase();
+
+/**
+ * Persistent suggestions may be partly overtaken by another accepted patch.
+ * Reduce only the already-present part so validation sees the same novel work
+ * that the mutation transaction will perform. Missing endpoints remain in the
+ * result and are still rejected by graph validation.
+ */
+export function reduceSuggestionPatchAgainstGraph(
+  patch: SuggestionPatch,
+  currentStates: Array<{ name: string; category?: string | null }>,
+  currentTransitions: Array<{ from: string; to: string; action?: string | null }>,
+): SuggestionPatch {
+  const existingStates = new Set(currentStates.map((state) => normalizedPatchToken(state.name)));
+  const states = patch.states.filter((state) => !existingStates.has(normalizedPatchToken(state.name)));
+  const transitionKey = (transition: { from: string; to: string; action?: string | null }) => [
+    normalizedPatchToken(transition.from),
+    normalizedPatchToken(transition.to),
+    normalizedPatchToken(transition.action),
+  ].join(':');
+  const seenTransitions = new Set(currentTransitions.map(transitionKey));
+  const transitions = patch.transitions.filter((transition) => {
+    const key = transitionKey(transition);
+    if (seenTransitions.has(key)) return false;
+    seenTransitions.add(key);
+    return true;
+  });
+  return { states, transitions };
+}
+
+/**
+ * A review with no initial state cannot repair reachability. Propose a small,
+ * explicit entry state instead of guessing that one of the user's existing
+ * states should change meaning. The proposal remains reviewable and is not
+ * persisted until the selected review is applied.
+ */
+export function createInitialStateRepair(
+  flowName: string,
+  nodes: FlowNodeInput[],
+  edges: FlowEdgeInput[],
+): { state: FlowNodeInput & { category: 'SYSTEM'; role: 'INITIAL' }; transition: FlowEdgeInput & { action: string } } | null {
+  if (!nodes.length || nodes.some((node) => node.role === 'INITIAL')) return null;
+  const existingNames = new Set(nodes.map((node) => normalizedPatchToken(node.stateName)));
+  const baseName = `${normalizedPatchToken(flowName) || 'FLOW'}_START`;
+  let stateName = baseName;
+  let suffix = 2;
+  while (existingNames.has(stateName)) stateName = `${baseName}_${suffix++}`;
+
+  const incoming = new Set(edges.map((edge) => edge.toNodeId));
+  const outgoing = new Map<string, string[]>();
+  for (const edge of edges) outgoing.set(edge.fromNodeId, [...(outgoing.get(edge.fromNodeId) ?? []), edge.toNodeId]);
+  const reachableCount = (startId: string) => {
+    const reached = new Set<string>();
+    const pending = [startId];
+    while (pending.length) {
+      const current = pending.pop()!;
+      if (reached.has(current)) continue;
+      reached.add(current);
+      for (const next of outgoing.get(current) ?? []) pending.push(next);
+    }
+    return reached.size;
+  };
+  const nonTerminal = nodes.filter((node) => node.role !== 'TERMINAL');
+  const roots = nonTerminal.filter((node) => !incoming.has(node.id));
+  const rankedTargets = (roots.length ? roots : nonTerminal.length ? nonTerminal : nodes)
+    .map((node) => ({ node, reach: reachableCount(node.id) }))
+    .sort((left, right) => right.reach - left.reach || normalizedPatchToken(left.node.stateName).localeCompare(normalizedPatchToken(right.node.stateName)));
+  const target = rankedTargets[0].node;
+  const existingIds = new Set(nodes.map((node) => node.id));
+  let stateId = 'proposed-initial';
+  let idSuffix = 2;
+  while (existingIds.has(stateId)) stateId = `proposed-initial-${idSuffix++}`;
+  return {
+    state: { id: stateId, stateName, behaviorKey: stateName, category: 'SYSTEM', role: 'INITIAL', terminalKind: null },
+    transition: { id: `${stateId}-entry`, fromNodeId: stateId, toNodeId: target.id, action: 'BEGIN' },
+  };
+}
 
 export function createConnectivityRepairTransitions(nodes: FlowNodeInput[], edges: FlowEdgeInput[]): Array<{ from: string; to: string; action: string }> {
   const initial = nodes.filter((node) => node.role === 'INITIAL');

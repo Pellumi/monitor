@@ -17,7 +17,14 @@ import { getActiveRulesets, inferDomain, generateRuleBasedFlow, suggestFlowGaps,
 import { writeAuditLog, extractAuditContext, makeRequireSystemAdmin } from '@tellann/authz';
 import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
-import { createConnectivityRepairTransitions, createFlowDiagrams, templateSeedStates, validateFlow } from './flow-domain';
+import {
+  createConnectivityRepairTransitions,
+  createFlowDiagrams,
+  createInitialStateRepair,
+  reduceSuggestionPatchAgainstGraph,
+  templateSeedStates,
+  validateFlow,
+} from './flow-domain';
 import { buildReviewHash, narrationFindings, runStaticSustainabilityChecks, toNarrationInput } from './sustainability-review';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tellann-default-jwt-secret-change-in-production';
@@ -2581,11 +2588,27 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/generate', 
         if (!validTransitions.length) return [];
         return [{ ...item, suggestedState: undefined, suggestedStates: [], suggestedTransition: undefined, suggestedTransitions: validTransitions }];
       });
-      const nameToId = new Map(graph.nodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node.id]));
+      const initialRepair = createInitialStateRepair(graph.name, graph.nodes as any, graph.edges as any);
+      if (initialRepair) {
+        const target = graph.nodes.find((node) => node.id === initialRepair.transition.toNodeId)!;
+        generatedSuggestions.unshift({
+          key: `initial-state-repair:${graphHash}`,
+          type: 'VALIDATION_CONSTRAINT',
+          title: `Create ${initialRepair.state.stateName} as the starting state`,
+          description: `Add an explicit entry state before ${target.stateName} so the Flow has one unambiguous beginning.`,
+          severity: 'HIGH', confidence: 1,
+          rationale: 'The current Flow has no initial state. A separate generated entry preserves the meaning of every existing state.',
+          evidence: ['FLOW_INITIAL_STATE_COUNT'], sources: ['RULE_BASED'], label: 'Rule-based',
+          suggestedStates: [{ name: initialRepair.state.stateName, category: 'SYSTEM', role: 'INITIAL', terminalKind: null }],
+          suggestedTransitions: [{ from: initialRepair.state.stateName, to: target.stateName, action: initialRepair.transition.action }],
+        });
+      }
+      const prospectiveNodes = initialRepair ? [...graph.nodes, initialRepair.state] : graph.nodes;
+      const nameToId = new Map(prospectiveNodes.map((node) => [normalizeKeyForSuggestion(node.stateName), node.id]));
       const proposedEdges = generatedSuggestions.flatMap((item, index) => suggestionPatch(item).transitions.map((edge, edgeIndex) => ({
         id: `review-${index}-${edgeIndex}`, graphId: flowId, fromNodeId: nameToId.get(edge.from)!, toNodeId: nameToId.get(edge.to)!, action: edge.action ?? null,
       })));
-      const repairs = createConnectivityRepairTransitions(graph.nodes as any, [...graph.edges, ...proposedEdges] as any);
+      const repairs = createConnectivityRepairTransitions(prospectiveNodes as any, [...graph.edges, ...proposedEdges] as any);
       if (repairs.length) generatedSuggestions = [...generatedSuggestions, {
         key: `connection-repair:${graphHash}`, type: 'VALIDATION_CONSTRAINT', title: 'Complete the existing flow connections',
         description: 'Connect every existing state and terminal outcome to the initial state before suggesting additional states.',
@@ -3826,12 +3849,16 @@ app.post('/v1/applications/:appId/declared-flows/:flowId/suggestions/:suggestion
     // only refused (422 below, via validateGeneratedGraph) if it genuinely no
     // longer fits the current graph.
 
-    const patch = suggestionPatch({
+    const patch = reduceSuggestionPatchAgainstGraph(suggestionPatch({
       suggestedStates: suggestion.suggestedStatesJson,
       suggestedTransitions: suggestion.suggestedTransitionsJson,
       suggestedState: suggestion.suggestedStateName,
       severity: suggestion.severity,
-    });
+    }), graph.nodes.map((node) => ({ name: node.stateName, category: node.category })), graph.edges.map((edge) => ({
+      from: edge.fromNode.stateName,
+      to: edge.toNode.stateName,
+      action: edge.action,
+    })));
     const prospectiveStates = new Map<string, { name: string; category: string }>(
       graph.nodes.map((node) => [normalizeKeyForSuggestion(node.stateName), { name: node.stateName, category: node.category }]),
     );

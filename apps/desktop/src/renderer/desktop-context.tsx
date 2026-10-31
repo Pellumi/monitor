@@ -900,6 +900,9 @@ export function normalizeDesktopError(cause: unknown): string {
   if (/QA_BRANCH_CONFIRMATION_REQUIRED/.test(raw)) {
     return 'This workspace is not on the QA review branch, and applying there was not confirmed. Try again and Tellann will ask before writing to the current branch.';
   }
+  if (/INVALID_SUGGESTION_PATCH(?:_ENDPOINT)?/.test(raw)) {
+    return 'This suggestion no longer fits the current Flow. Refresh the suggestions to rebuild it from the latest states and transitions, or dismiss it.';
+  }
   if (/STALE_TARGET_FILE:/.test(raw)) {
     const file = raw.split('STALE_TARGET_FILE:')[1]?.trim().split(/[\s'"]/)[0] || 'A project file';
     return `${file} changed on disk after this setup task was created, so Tellann stopped before writing anything to avoid overwriting your own edits. Open the project’s Instrumentation page, run “Detect framework” again to build a fresh task from the current files, then approve and apply that new task.`;

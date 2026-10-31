@@ -98,7 +98,6 @@ export function useFlowEditor(projectId: string, flowId: string) {
   const [reviewLoading, setReviewLoading] = useState(false);
   const [reviewPreviewLoading, setReviewPreviewLoading] = useState(false);
   const [reviewApplying, setReviewApplying] = useState(false);
-  const [reviewResolvingInitial, setReviewResolvingInitial] = useState(false);
   const [reviewNotice, setReviewNotice] = useState<string | null>(null);
   const previewSequence = useRef(0);
 
@@ -441,38 +440,6 @@ export function useFlowEditor(projectId: string, flowId: string) {
     }
   }, [flow, flowId, projectId, showReview]);
 
-  /**
-   * Repair the review prerequisite without discarding the person's review context.
-   * The graph revision changes when the role changes, so the old preview cannot be
-   * reused: refresh the flow and regenerate the whole-flow review in one operation.
-   */
-  const resolveReviewInitialState = useCallback(async (state: FlowState) => {
-    setReviewResolvingInitial(true);
-    setReviewNotice(null);
-    setError(null);
-    try {
-      let result: GraphResult | undefined;
-      const others = (flow?.states ?? []).filter((item) => item.id !== state.id && item.role === 'INITIAL');
-      for (const other of others) {
-        await intent().updateDeclaredState(projectId, flowId, other.id, other.stateName, other.category, 'NORMAL', null);
-      }
-      result = await intent().updateDeclaredState(projectId, flowId, state.id, state.stateName, state.category, 'INITIAL', null) as GraphResult;
-      const refreshed = await refreshFlow();
-      const next = await intent().generateFlowSuggestions(projectId, flowId, {
-        trigger: 'FLOW_REVIEW_REQUESTED',
-        graphVersion: result.graphVersion ?? result.data?.graphVersion ?? refreshed.version,
-      });
-      showReview(next);
-      setReviewNotice(`${state.stateName} is now the initial state. The proposals were refreshed against the updated flow.`);
-      refreshSuggestions('STATE_UPDATED', result);
-      void loadHistory();
-    } catch (cause) {
-      setError(normalizeDesktopError(cause));
-    } finally {
-      setReviewResolvingInitial(false);
-    }
-  }, [flow?.states, flowId, loadHistory, projectId, refreshFlow, refreshSuggestions, showReview]);
-
   const toggleReviewSuggestion = useCallback((suggestionId: string) => {
     setSelectedReviewIds((current) => {
       const next = new Set(current);
@@ -582,13 +549,11 @@ export function useFlowEditor(projectId: string, flowId: string) {
       loading: reviewLoading,
       previewLoading: reviewPreviewLoading,
       applying: reviewApplying,
-      resolvingInitial: reviewResolvingInitial,
       notice: reviewNotice,
       request: requestReview,
       toggle: toggleReviewSuggestion,
       apply: applyReview,
       decline: declineReview,
-      resolveInitialState: resolveReviewInitialState,
     },
     history,
     historyLoading,

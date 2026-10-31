@@ -1073,7 +1073,6 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                 <SuggestionsPanel
                   editable={editable}
                   stateCount={flow.states.length}
-                  states={flow.states}
                   sourceAvailable={Boolean(documentSourceName)}
                   suggestions={editor.suggestions}
                   meta={editor.suggestionMeta}
@@ -1093,10 +1092,6 @@ function FlowEditorWorkspace({ projectId, flowId, onClose, onDeleted }: FlowEdit
                     request: () => void editor.review.request(),
                     apply: () => void editor.review.apply(),
                     decline: () => void editor.review.decline(),
-                    resolveInitialState: (stateId) => {
-                      const state = flow.states.find((item) => item.id === stateId);
-                      if (state) void editor.review.resolveInitialState(state);
-                    },
                   }}
                 />
               ) : null}
