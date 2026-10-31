@@ -101,6 +101,11 @@ function waitFor(milliseconds: number, signal: AbortSignal): Promise<void> {
  * the request (and every page awaiting it) forever — there is no other timeout
  * anywhere in this path. */
 const REQUEST_TIMEOUT_MS = 15_000;
+// Document-to-flow generation is synchronous and may make several provider
+// calls (decomposition, generation and consistency repair). Keep the short
+// default above for ordinary API traffic, but do not abort valid generation
+// work while the provider is still responding.
+const DOCUMENT_GENERATION_TIMEOUT_MS = 5 * 60_000;
 
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
@@ -129,10 +134,16 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
     });
   } catch (cause) {
     const endpoint = new URL(url).origin;
+    const timedOut = cause instanceof DOMException && cause.name === "TimeoutError";
     const error = new Error(
-      `Tellann cloud is unavailable at ${endpoint}. Check that the API gateway is running, then retry.`,
+      timedOut
+        ? `The request to Tellann cloud at ${endpoint} timed out. Retry the operation.`
+        : `Tellann cloud is unavailable at ${endpoint}. Check that the API gateway is running, then retry.`,
     );
-    Object.assign(error, { code: "CLOUD_UNAVAILABLE", cause });
+    Object.assign(error, {
+      code: timedOut ? "CLOUD_TIMEOUT" : "CLOUD_UNAVAILABLE",
+      cause,
+    });
     throw error;
   }
   const body =
@@ -1083,7 +1094,11 @@ export class DesktopCloudClient {
   ): Promise<Json> {
     return this.request<Json>(
       `/applications/${applicationId}/source-documents/generate-flow`,
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(DOCUMENT_GENERATION_TIMEOUT_MS),
+      },
     );
   }
 
@@ -1094,7 +1109,11 @@ export class DesktopCloudClient {
   ): Promise<Json> {
     return this.request<Json>(
       `/applications/${applicationId}/source-documents/generate-flows`,
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST",
+        body: JSON.stringify(input),
+        signal: AbortSignal.timeout(DOCUMENT_GENERATION_TIMEOUT_MS),
+      },
     );
   }
 
