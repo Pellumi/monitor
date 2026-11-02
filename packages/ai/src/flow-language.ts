@@ -359,6 +359,16 @@ function clip(value: unknown, max: number): string | undefined {
   return text ? text.slice(0, max) : undefined;
 }
 
+/** Like `clip`, but backs off to the last whole word instead of cutting mid-word — evidence is re-checked against document text later, and a word sheared in half can never match there. */
+function clipAtWord(value: unknown, max: number): string | undefined {
+  const text = typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+  if (!text) return undefined;
+  if (text.length <= max) return text;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(' ');
+  return (lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut).trim();
+}
+
 /**
  * Rewrites a workflow into the flow language.
  *
@@ -390,7 +400,7 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
     const wasSentence = toSnakeKey(source) !== key && !isCompactKey(toSnakeKey(source));
     const recognizer = sanitizeRecognizer(state.recognizer);
     const subFlow = sanitizeSubFlow(state.subFlow);
-    const evidence = clip(state.evidence, 200);
+    const evidence = clipAtWord(state.evidence, 280);
     const { recognizer: _recognizer, subFlow: _subFlow, evidence: _evidence, ...rest } = state;
     return {
       ...rest,
@@ -422,7 +432,7 @@ export function normalizeWorkflowLanguage<W extends UntrustedWorkflow>(workflow:
     const effects = sanitizeEffects(transition.effects);
     // A step the person marked is kept as marked; only an unmarked one is judged.
     const mode = sanitizeMode(transition.mode) ?? inferStepMode({ action, control, effects });
-    const evidence = clip(transition.evidence, 200);
+    const evidence = clipAtWord(transition.evidence, 280);
     const { control: _control, inputs: _inputs, effects: _effects, mode: _mode, evidence: _evidence, ...rest } = transition;
     transitions.push({
       ...rest, from, to, action,

@@ -131,6 +131,35 @@ export class DocumentImportManager {
   }
 
   /**
+   * Generates a review draft from newly chosen local files and already-processed
+   * document versions together, in one session — the "Generate from documents"
+   * picker lets a member mix both instead of choosing one path or the other.
+   */
+  startFromFilesAndVersions(
+    applicationId: string,
+    filePaths: string[],
+    versions: Array<{ versionId: string; documentId: string | null; filename: string }>,
+    generateDraft: boolean,
+  ): DocumentImportView {
+    this.assertIdle(applicationId);
+    const selectedFiles = filePaths.slice(0, MAX_FILES);
+    const selectedVersions = versions.slice(0, Math.max(MAX_FILES - selectedFiles.length, 0));
+    if (!selectedFiles.length && !selectedVersions.length) throw new Error('INTENT_SOURCE_REQUIRED');
+    const newFiles: DocumentImportFile[] = selectedFiles.map((filePath) => ({
+      id: crypto.randomUUID(), filename: path.basename(filePath), status: 'WAITING', documentId: null,
+      jobId: null, versionId: null, deduplicated: false, errorMessageSafe: null,
+    }));
+    const readyFiles: DocumentImportFile[] = selectedVersions.map((document) => ({
+      id: crypto.randomUUID(), filename: document.filename, status: 'READY', documentId: document.documentId,
+      jobId: null, versionId: document.versionId, deduplicated: true, errorMessageSafe: null,
+    }));
+    const stage: DocumentImportStage = newFiles.length ? 'EXTRACTING_AND_UPLOADING' : 'GENERATING_DRAFT';
+    const session = this.create(applicationId, generateDraft, stage, [...newFiles, ...readyFiles]);
+    this.run(applicationId, selectedFiles);
+    return this.view(session);
+  }
+
+  /**
    * Continues an import this process is not working on: one interrupted by
    * closing the desktop, or one that stopped waiting (offline, or slower than
    * the wait limit). Server jobs that already exist are reused, never duplicated.
@@ -298,8 +327,11 @@ export class DocumentImportManager {
 
   private async uploadFiles(session: DocumentImportSession, filePaths: string[]): Promise<void> {
     const { cloud, safeError, sourceKey } = this.options;
-    for (let index = 0; index < session.files.length; index += 1) {
-      const file = session.files[index];
+    // Only WAITING entries came from filePaths — a mixed session also carries
+    // already-READY entries for reused document versions, which never upload.
+    const pendingFiles = session.files.filter((file) => file.status === 'WAITING');
+    for (let index = 0; index < pendingFiles.length; index += 1) {
+      const file = pendingFiles[index];
       const filePath = filePaths[index];
       if (this.cancelRequested.has(session.applicationId)) break;
       if (!filePath) {

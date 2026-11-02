@@ -27,6 +27,7 @@
   },
   "dependencies": {
     "@tellann/agent-policy": "workspace:*",
+    "@tellann/ai": "workspace:*",
     "@tellann/automation-engine": "workspace:*",
     "@tellann/browser-observer": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",

@@ -1,6 +1,8 @@
 import path from 'node:path';
 import fs from 'node:fs';
 
+export * from './autonomous-risk';
+
 export type StructuredCommand = {
   executable: string;
   args: string[];

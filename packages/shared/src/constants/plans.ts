@@ -71,6 +71,7 @@ const DESKTOP_FREE_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: false },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.AUTONOMOUS_QA_RUNS,            enabled: false },
   { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: false },
 ];
 
@@ -82,6 +83,7 @@ const DESKTOP_LOCAL_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.STANDARD },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.BASIC },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.AUTONOMOUS_QA_RUNS,            enabled: false },
   { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.STANDARD },
 ];
 
@@ -93,6 +95,7 @@ const DESKTOP_SOLO_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.STANDARD },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.AUTONOMOUS_QA_RUNS,            enabled: false },
   { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
@@ -104,12 +107,18 @@ const DESKTOP_TEAM_FEATURES: PlanFeatureConfig[] = [
   { feature: Feature.VISUAL_ACCESSIBILITY_ANALYSIS, enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.CODEBASE_INTELLIGENCE,          enabled: true, tier: FeatureTier.ADVANCED },
   { feature: Feature.AUTOMATED_QA_RUNS,             enabled: false },
+  { feature: Feature.AUTONOMOUS_QA_RUNS,            enabled: false },
   { feature: Feature.FLOW_SUSTAINABILITY_REVIEW,    enabled: true, tier: FeatureTier.ADVANCED },
 ];
 
 /** Business and Enterprise add Automated Run: everything Team has, with the executing capability on. */
 const DESKTOP_BUSINESS_FEATURES: PlanFeatureConfig[] = DESKTOP_TEAM_FEATURES.map((item) =>
   item.feature === Feature.AUTOMATED_QA_RUNS ? { ...item, enabled: true } : item,
+);
+
+/** Enterprise only: Autonomous Run spends model calls and can act on its own, so it sits above Automated Run rather than beside it. */
+const DESKTOP_ENTERPRISE_FEATURES: PlanFeatureConfig[] = DESKTOP_BUSINESS_FEATURES.map((item) =>
+  item.feature === Feature.AUTONOMOUS_QA_RUNS ? { ...item, enabled: true } : item,
 );
 
 // ─────────────────────────────────────────────────────────────
@@ -472,7 +481,7 @@ export const PLAN_DEFINITIONS: Record<PlanTypeKey, PlanDefinition> = {
     },
     features: [
       ...CORE_FEATURES,
-      ...DESKTOP_BUSINESS_FEATURES,
+      ...DESKTOP_ENTERPRISE_FEATURES,
       { feature: Feature.REPORT_GENERATION,     enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.DOM_SESSION_REPLAY,    enabled: true, tier: FeatureTier.ADVANCED },
       { feature: Feature.REPORT_EXPORT,         enabled: true, tier: FeatureTier.ALL_FORMATS },

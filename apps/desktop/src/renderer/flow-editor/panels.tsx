@@ -715,8 +715,38 @@ export function DocumentGroundingBanner({
     flow.states.filter((state) => ((state as { evidenceIds?: string[] }).evidenceIds?.length ?? 0) > 0).length +
     flow.transitions.filter((transition) => ((transition as { evidenceIds?: string[] }).evidenceIds?.length ?? 0) > 0).length;
   const hasGroundingData = groundedCount > 0;
+  const dismissalKey = `tellann:flow-grounding-dismissed:${flow.id}`;
+  const issueSignature = JSON.stringify({
+    groundedCount,
+    groundableCount,
+    leftOut: leftOut.map((issue) => [issue.code, issue.target, issue.message]),
+    structuralIssues: structuralIssues.map((issue) => [issue.code, issue.target, issue.message]),
+  });
+  const [dismissed, setDismissed] = useState(() => {
+    try {
+      return localStorage.getItem(dismissalKey) === issueSignature;
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      setDismissed(localStorage.getItem(dismissalKey) === issueSignature);
+    } catch {
+      setDismissed(false);
+    }
+  }, [dismissalKey, issueSignature]);
 
-  if (!issueCount && !hasGroundingData) return null;
+  if ((!issueCount && !hasGroundingData) || dismissed) return null;
+
+  const dismiss = () => {
+    try {
+      localStorage.setItem(dismissalKey, issueSignature);
+    } catch {
+      // Hiding the audit for this session still works when storage is unavailable.
+    }
+    setDismissed(true);
+  };
 
   const jumpToTarget = (target?: string) => {
     if (!target) return;
@@ -734,17 +764,33 @@ export function DocumentGroundingBanner({
 
   return (
     <div className="infobar flow-grounding-banner" data-tone={issueCount ? 'warning' : undefined}>
-      <button type="button" className="flow-grounding-summary" onClick={() => setExpanded((v) => !v)}>
-        {hasGroundingData ? (
-          <span className="flow-grounding-coverage">
-            {groundedCount}/{groundableCount} grounded in the source document
-          </span>
-        ) : null}
-        {issueCount > 0 ? (
-          <span className="flow-grounding-issue-count">{issueCount} left out or flagged</span>
-        ) : null}
-        <ChevronRight size={14} className={expanded ? 'flow-grounding-chevron is-open' : 'flow-grounding-chevron'} />
-      </button>
+      <div className="flow-grounding-toolbar">
+        <button
+          type="button"
+          className="flow-grounding-summary"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {hasGroundingData ? (
+            <span className="flow-grounding-coverage">
+              {groundedCount}/{groundableCount} grounded in the source document
+            </span>
+          ) : null}
+          {issueCount > 0 ? (
+            <span className="flow-grounding-issue-count">{issueCount} left out or flagged</span>
+          ) : null}
+          <ChevronRight size={14} className={expanded ? 'flow-grounding-chevron is-open' : 'flow-grounding-chevron'} />
+        </button>
+        <button
+          type="button"
+          className="flow-icon-button flow-grounding-dismiss"
+          aria-label="Dismiss document grounding audit"
+          title="Dismiss until the grounding audit changes"
+          onClick={dismiss}
+        >
+          <X size={14} />
+        </button>
+      </div>
       {expanded ? (
         <ul className="flow-grounding-list">
           {leftOut.map((issue, index) => (

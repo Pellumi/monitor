@@ -139,6 +139,8 @@ const IPC = {
   cancelDocumentImport: 'tellann:documents:import:cancel',
   dismissDocumentImport: 'tellann:documents:import:dismiss',
   generateFromDocumentVersions: 'tellann:documents:import:generate',
+  pickDocumentFiles: 'tellann:documents:import:pick-files',
+  generateFromDocumentsAndVersions: 'tellann:documents:import:generate-mixed',
   documentImportProgress: 'tellann:documents:import:progress',
   openExternal: 'tellann:system:open-external',
   openPath: 'tellann:system:open-path',
@@ -359,6 +361,12 @@ contextBridge.exposeInMainWorld('tellann', {
     dismissImport: (applicationId: string) => ipcRenderer.invoke(IPC.dismissDocumentImport, applicationId),
     generateFromVersions: (applicationId: string, documents: Array<{ versionId: string; documentId: string | null; filename: string }>) =>
       ipcRenderer.invoke(IPC.generateFromDocumentVersions, { applicationId, documents }),
+    pickFiles: () => ipcRenderer.invoke(IPC.pickDocumentFiles) as Promise<{ filePaths: string[] } | null>,
+    generateFromFilesAndVersions: (
+      applicationId: string,
+      filePaths: string[],
+      documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
+    ) => ipcRenderer.invoke(IPC.generateFromDocumentsAndVersions, { applicationId, filePaths, documents }),
     onImportProgress: (callback: (view: unknown) => void) => {
       const subscription = (_: unknown, data: unknown) => callback(data);
       ipcRenderer.on(IPC.documentImportProgress, subscription);

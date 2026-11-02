@@ -77,6 +77,34 @@ const has = (text: string, phrase: string) => {
   return Boolean(needle) && ` ${norm(text)} `.includes(` ${needle} `);
 };
 
+const EVIDENCE_STOPWORDS = new Set([
+  'a', 'an', 'the', 'and', 'or', 'to', 'of', 'in', 'on', 'at', 'for', 'is', 'are', 'was', 'were', 'be', 'been',
+  'this', 'that', 'they', 'them', 'their', 'it', 'its', 'with', 'as', 'so', 'if', 'when', 'then', 'not', 'no',
+  'do', 'does', 'did', 'will', 'would', 'can', 'could', 'should', 'have', 'has', 'had', 'from', 'by', 'into',
+  'onto', 'than', 'too', 'but', 'also', 'you', 'your', 'he', 'she', 'his', 'her', 'we', 'our', 'his',
+]);
+
+/**
+ * Whether a state or transition's `evidence` citation is substantiated by the document.
+ * Short evidence (a route, a heading, a control label's worth of words) still needs one
+ * of the exact checks above — those are meant to be literal. A sentence-length citation
+ * is checked differently: live PDF extraction regularly reorders or re-wraps numbered
+ * sub-lists and multi-column text, and a model paraphrases a long sentence more than a
+ * short one even when told to quote verbatim, so requiring the whole citation to appear
+ * as one unbroken run drops real, correctly-cited content along with invented content.
+ * Instead, a long citation is checked by how much of its distinctive vocabulary the
+ * document actually contains, not as one contiguous string — still strict enough that a
+ * truly fabricated citation (sharing almost no words with the real document) fails it.
+ */
+function evidenceMatches(text: string, phrase: string): boolean {
+  if (has(text, phrase) || writtenAsHeading(text, phrase) || writtenAsControl(text, phrase)) return true;
+  const words = norm(phrase).split(' ').filter((word) => word.length > 2 && !EVIDENCE_STOPWORDS.has(word));
+  if (words.length < 6) return false;
+  const haystack = ` ${norm(text)} `;
+  const found = words.filter((word) => haystack.includes(` ${word} `)).length;
+  return found / words.length >= 0.7;
+}
+
 const ENVIRONMENT_WORDS: Record<string, RegExp> = {
   DEVELOPMENT: /\b(dev|development|local)\b/i,
   STAGING: /\b(staging|stage|qa)\b/i,
@@ -124,7 +152,7 @@ export function groundInDocument<W extends UntrustedWorkflow>(workflow: Normaliz
   const keptStates = workflow.states.filter((state) => {
     const evidence = (state as { evidence?: string }).evidence;
     if (!canCheck || !evidence) return true;
-    const ok = has(source, evidence) || writtenAsHeading(source, evidence);
+    const ok = evidenceMatches(source, evidence);
     if (!ok) dropTopology(state.key, `The state ${state.key}`, `its evidence ("${evidence}") does not appear in the document, so the state itself is unsupported.`, evidence);
     return ok;
   });
@@ -153,7 +181,7 @@ export function groundInDocument<W extends UntrustedWorkflow>(workflow: Normaliz
       }
       const evidence = (transition as { evidence?: string }).evidence;
       if (!canCheck || !evidence) return true;
-      const ok = has(source, evidence) || writtenAsControl(source, evidence);
+      const ok = evidenceMatches(source, evidence);
       if (!ok) dropTopology(label, `The transition ${label}`, `its evidence ("${evidence}") does not appear in the document, so the transition itself is unsupported.`, evidence);
       return ok;
     })

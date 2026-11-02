@@ -2515,6 +2515,65 @@ enum QARunMode {
   ASSISTED
   OBSERVATION_ONLY
   AUTOMATED
+  AUTONOMOUS
+}
+
+/// AUTONOMOUS runs only. Mirrors the desktop lifecycle for a plan-and-drive run toward a stated goal.
+enum AutonomousRunStatus {
+  PLANNING
+  AWAITING_PLAN_APPROVAL
+  RUNNING
+  AWAITING_HUMAN
+  RECOVERING
+  PAUSED
+  VERIFYING
+  COMPLETED
+  COMPLETED_INCOMPLETE
+  FAILED
+  CANCELLED
+}
+
+/// How dangerous a proposed action is, ordered by what it would take to undo it. Mirrors
+/// `@tellann/desktop-contracts`' `AutonomousRiskTier` and `@tellann/automation-engine`'s
+/// `riskTierOf()` mapping from `ActionClass` — kept in sync by hand across the three.
+enum AutonomousRiskTier {
+  READ_ONLY
+  REVERSIBLE
+  STATE_CHANGING
+  HIGH_IMPACT
+}
+
+enum AutonomousActionOutcome {
+  EXECUTED
+  VERIFIED
+  FAILED
+  BLOCKED_BY_POLICY
+  BLOCKED_AWAITING_APPROVAL
+  RETRIED
+}
+
+/// doc §8.3's five outcome states, plus RUNNING for a scenario in progress.
+enum AutonomousScenarioStatus {
+  NOT_RUN
+  RUNNING
+  PASS
+  FAIL
+  BLOCKED
+  INCONCLUSIVE
+}
+
+enum AutonomousInterventionCategory {
+  MISSING_INFORMATION
+  MISSING_AUTHORITY
+  EXTERNAL_DEPENDENCY
+  HIGH_IMPACT_APPROVAL
+}
+
+enum AutonomousInterventionStatus {
+  PENDING
+  RESOLVED
+  CANCELLED
+  TIMED_OUT
 }
 
 enum QACaptureTrack {
@@ -3367,6 +3426,8 @@ model QARun {
   evidenceEvents   QARunEvidenceEvent[]
   annotations      QARunAnnotation[]
   report           QAReport?
+  /// AUTONOMOUS runs only; absent for every other mode.
+  autonomousRun    AutonomousRun?
 
   @@index([organizationId, applicationId, createdAt])
   @@index([environmentId, status])
@@ -3374,6 +3435,132 @@ model QARun {
   @@index([flowId, expectedGraphVersionId, createdAt])
   @@index([flowBindingId, status])
   @@index([applicationId, archivedAt])
+}
+
+/// The one new table that replaces `QARun.automation`'s pinned-config role for AUTONOMOUS mode: a
+/// goal and budget instead of a pinned target/profile/persona, since the plan a model proposes
+/// toward that goal is versioned separately (`AutonomousPlanVersion`) rather than pinned at creation.
+model AutonomousRun {
+  id                    String              @id @default(uuid())
+  runId                 String              @unique
+  run                   QARun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  /// The developer's own natural-language objective, as typed.
+  goal                  String
+  /// PolicyOptions-shaped: approvedOrigins and whatever else a future constraint needs. Never touches
+  /// which action classes are routable — that stays permissive by design; this is read-only context.
+  constraints           Json
+  planVersion           Int                 @default(0)
+  status                AutonomousRunStatus @default(PLANNING)
+  maxActions            Int
+  maxModelCalls         Int
+  maxDurationMs         Int
+  actionsUsed           Int                 @default(0)
+  modelCallsUsed        Int                 @default(0)
+  pendingInterventionId String?             @unique
+  scopeApprovedAt       DateTime?
+  scopeApprovedByUserId String?
+  /// Set by the dashboard's cancel route; the desktop picks it up over the per-run SSE stream it is
+  /// already connected to for evidence reporting.
+  cancelRequestedAt     DateTime?
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+
+  planVersions  AutonomousPlanVersion[]
+  scenarios     AutonomousScenario[]
+  actions       AutonomousAction[]
+  interventions AutonomousIntervention[]
+
+  @@index([status])
+}
+
+model AutonomousPlanVersion {
+  id               String        @id @default(uuid())
+  autonomousRunId  String
+  autonomousRun    AutonomousRun @relation(fields: [autonomousRunId], references: [id], onDelete: Cascade)
+  version          Int
+  /// The TestPlan the model produced (`@tellann/ai`'s `TestPlanSchema`), as generated.
+  plan             Json
+  /// Null for version 1; "REPLAN: <why>" for every version after.
+  reason           String?
+  provider         String?
+  model            String?
+  promptHash       String?
+  approvedAt       DateTime?
+  approvedByUserId String?
+  createdAt        DateTime      @default(now())
+
+  @@unique([autonomousRunId, version])
+}
+
+model AutonomousScenario {
+  id              String                   @id @default(uuid())
+  autonomousRunId String
+  autonomousRun   AutonomousRun            @relation(fields: [autonomousRunId], references: [id], onDelete: Cascade)
+  planVersion     Int
+  /// Stable slug within the plan, e.g. "register_account".
+  key             String
+  title           String
+  successCriteria String[]                 @default([])
+  status          AutonomousScenarioStatus @default(NOT_RUN)
+  detail          String?
+  startedAt       DateTime?
+  endedAt         DateTime?
+
+  actions AutonomousAction[]
+
+  @@unique([autonomousRunId, planVersion, key])
+  @@index([autonomousRunId, status])
+}
+
+model AutonomousAction {
+  id                 String                  @id @default(uuid())
+  autonomousRunId    String
+  autonomousRun      AutonomousRun           @relation(fields: [autonomousRunId], references: [id], onDelete: Cascade)
+  scenarioId         String?
+  scenario           AutonomousScenario?     @relation(fields: [scenarioId], references: [id], onDelete: SetNull)
+  sequence           Int
+  /// The ActionProposal as returned (post-repair). Never a typed secret — the sequencer never hands the model one.
+  proposal           Json
+  riskTier           AutonomousRiskTier
+  requiredApproval   Boolean                 @default(false)
+  interventionId     String?
+  intervention       AutonomousIntervention? @relation(fields: [interventionId], references: [id], onDelete: SetNull)
+  outcome            AutonomousActionOutcome
+  observedState      String?
+  failureExplanation Json?
+  provider           String?
+  model              String?
+  promptHash         String?
+  inputTokens        Int?
+  outputTokens       Int?
+  estimatedCostUsd   Float?
+  latencyMs          Int?
+  occurredAt         DateTime                @default(now())
+
+  @@unique([autonomousRunId, sequence])
+  @@index([autonomousRunId, outcome])
+  @@index([scenarioId])
+}
+
+model AutonomousIntervention {
+  id                String                         @id @default(uuid())
+  autonomousRunId   String
+  autonomousRun     AutonomousRun                  @relation(fields: [autonomousRunId], references: [id], onDelete: Cascade)
+  category          AutonomousInterventionCategory
+  question          String
+  allowedResponses  String[]                       @default([])
+  status            AutonomousInterventionStatus   @default(PENDING)
+  response          String?
+  respondedByUserId String?
+  respondedAt       DateTime?
+  /// Set only for HIGH_IMPACT_APPROVAL: the one proposed action this approval covers, verified
+  /// server-side against `AutonomousAction.proposal` rather than trusted from the client.
+  actionFingerprint String?
+  createdAt         DateTime                       @default(now())
+
+  actions AutonomousAction[]
+
+  @@index([autonomousRunId, status])
 }
 
 model QARunEvidenceEvent {

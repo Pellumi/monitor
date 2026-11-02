@@ -2331,7 +2331,7 @@ function ConfirmModal({
           {title}
         </h2>
 
-        <div className="confirm-modal-body-box">
+        <div className="mt-4">
           <p>{description}</p>
         </div>
 
@@ -4987,7 +4987,8 @@ export function IntentPage() {
     resumeDocumentImport,
     cancelDocumentImport,
     dismissDocumentImport,
-    generateFromDocumentVersions,
+    pickDocumentFiles,
+    generateFromDocumentsAndVersions,
     onDocumentImportProgress,
     deleteIntentDraft,
     createDeclaredFlow,
@@ -5013,6 +5014,10 @@ export function IntentPage() {
   const [selectedReadyVersionIds, setSelectedReadyVersionIds] = useState<
     Set<string>
   >(() => new Set());
+  // Local paths chosen via the native file picker inside the document-generation
+  // modal, held here until "Generate" is pressed — not yet uploaded.
+  const [pendingFilePaths, setPendingFilePaths] = useState<string[]>([]);
+  const [pickingFiles, setPickingFiles] = useState(false);
   const [confirmingDraftId, setConfirmingDraftId] = useState<string | null>(
     null,
   );
@@ -5288,23 +5293,48 @@ export function IntentPage() {
     await uploadAndGenerate();
   };
 
-  const openReadyDocumentPicker = () => {
+  const openDocumentPicker = () => {
     setSelectedReadyVersionIds(new Set());
+    setPendingFilePaths([]);
     setDocumentPickerOpen(true);
   };
 
-  const generateReadyDocuments = async () => {
-    const selected = documents.flatMap((document) => {
+  const addFilesToPicker = async () => {
+    setPickingFiles(true);
+    try {
+      const chosen = await pickDocumentFiles();
+      if (chosen?.length) {
+        setPendingFilePaths((current) => Array.from(new Set([...current, ...chosen])));
+      }
+    } catch (error) {
+      showActionError(error);
+    } finally {
+      setPickingFiles(false);
+    }
+  };
+
+  const removePendingFile = (filePath: string) => {
+    setPendingFilePaths((current) => current.filter((path) => path !== filePath));
+  };
+
+  const generateFromPicker = async () => {
+    const selectedVersions = documents.flatMap((document) => {
       const version = document.versions[0];
       return version && selectedReadyVersionIds.has(version.id)
         ? [{ versionId: version.id, documentId: document.id, filename: document.filename }]
         : [];
     });
-    if (!selected.length) return;
+    if (!selectedVersions.length && !pendingFilePaths.length) return;
     setDocumentPickerOpen(false);
     setActionMessage(null);
     try {
-      trackImport(await generateFromDocumentVersions(activeProjectId, selected));
+      trackImport(
+        await generateFromDocumentsAndVersions(
+          activeProjectId,
+          pendingFilePaths,
+          selectedVersions,
+        ),
+      );
     } catch (error) {
       showActionError(error);
     }
@@ -5368,10 +5398,7 @@ export function IntentPage() {
     navigate(target);
   };
 
-  // Only drafts still awaiting a decision belong in the review queue; reviewed
-  // ones are history and link to the flow they produced.
   const pendingDrafts = drafts.filter((draft) => draft.status === "PENDING_REVIEW");
-  const reviewedDrafts = drafts.filter((draft) => draft.status !== "PENDING_REVIEW");
   const renderDraftRow = (draft: IntentDraft) => {
     const draftName =
       (draft.draftJson as any)?.workflows?.[0]?.name ?? "Document-derived intent";
@@ -5573,42 +5600,21 @@ export function IntentPage() {
                     ? "Stop or finish the active import before starting another."
                     : undefined
                 }
-                onClick={() => void uploadAndGenerate()}
+                onClick={openDocumentPicker}
               >
                 <span className="ai-intent-action-heading">
                   <FileSearch size={16} aria-hidden="true" />
-                  <span className="ai-intent-action-title">Upload new documents</span>
+                  <span className="ai-intent-action-title">Generate from documents</span>
                   <span className="ai-intent-action-badge">Recommended</span>
                 </span>
                 <span className="ai-intent-action-description">
                   {importActive
                     ? "Finish the current import before starting another."
-                    : "Process evidence and generate a grounded draft."}
+                    : readyDocumentCount > 0
+                      ? `Use ${readyDocumentCount} already-processed document${readyDocumentCount === 1 ? "" : "s"}, or add more.`
+                      : "Process evidence and generate a grounded draft."}
                 </span>
               </button>
-              {readyDocumentCount > 0 ? (
-                <button
-                  className="button ai-intent-action-card"
-                  disabled={busy || importActive}
-                  title={
-                    importActive
-                      ? "Stop or finish the active import before starting another."
-                      : undefined
-                  }
-                  onClick={openReadyDocumentPicker}
-                >
-                  <span className="ai-intent-action-heading">
-                    <Workflow size={16} aria-hidden="true" />
-                    <span className="ai-intent-action-title">Use ready documents</span>
-                    <span className="ai-intent-ready-count">
-                      {readyDocumentCount} available
-                    </span>
-                  </span>
-                  <span className="ai-intent-action-description">
-                    Generate from documents Tellann has already processed.
-                  </span>
-                </button>
-              ) : null}
               <button
                 className="button ai-intent-action-card is-alternative"
                 disabled={busy}
@@ -5656,79 +5662,133 @@ export function IntentPage() {
                 className="desktop-modal w-full bg-(--surface-1) border border-(--border) rounded-xs p-6 shadow-2xl"
                 role="dialog"
                 aria-modal="true"
-                aria-labelledby="ready-document-picker-title"
-                aria-describedby="ready-document-picker-description"
+                aria-labelledby="document-picker-title"
+                aria-describedby="document-picker-description"
               >
                 <div className="flex items-center justify-between mb-5">
                   <h2
-                    id="ready-document-picker-title"
+                    id="document-picker-title"
                     className="text-(--text-strong) text-[24px] font-semibold tracking-[-0.01em] mb-2"
                   >
-                    Choose documents
+                    Generate from documents
                   </h2>
                 </div>
 
                 <p
-                  id="ready-document-picker-description"
+                  id="document-picker-description"
                   className="text-(--text) text-[14px] leading-relaxed mb-6"
                 >
-                  Select the uploaded documents Tellann should use as evidence.
-                  Only the latest processed version of each document is shown.
+                  Pick any documents Tellann has already processed, add new
+                  ones, or both — they&apos;ll all be used as evidence for the
+                  same draft.
                 </p>
 
-                <div className="bg-(--surface-0) border border-(--border) rounded-xs mb-4 max-h-[380px] overflow-y-auto divide-y divide-(--border)">
-                  {versionedDocuments.map((document) => {
-                    const version = document.versions[0];
-                    const readiness = documentReadiness(document);
-                    const selected = selectedReadyVersionIds.has(version.id);
-                    const toggleSelect = () => {
-                      setSelectedReadyVersionIds((current) => {
-                        const next = new Set(current);
-                        if (next.has(version.id)) next.delete(version.id);
-                        else next.add(version.id);
-                        return next;
-                      });
-                    };
+                {versionedDocuments.length > 0 ? (
+                  <div className="bg-(--surface-0) border border-(--border) rounded-xs mb-4 max-h-[320px] overflow-y-auto divide-y divide-(--border)">
+                    {versionedDocuments.map((document) => {
+                      const version = document.versions[0];
+                      const readiness = documentReadiness(document);
+                      const selected = selectedReadyVersionIds.has(version.id);
+                      const toggleSelect = () => {
+                        setSelectedReadyVersionIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(version.id)) next.delete(version.id);
+                          else next.add(version.id);
+                          return next;
+                        });
+                      };
 
-                    return (
-                      <div
-                        key={document.id}
-                        className={`flex items-center justify-between p-4 cursor-default transition-colors ${
-                          selected
-                            ? "bg-(--surface-1)"
-                            : "bg-(--surface-0) hover:bg-(--surface-1)"
-                        }`}
-                        onClick={toggleSelect}
-                      >
-                        <div className="flex flex-col gap-1 min-w-0 pr-4">
-                          <strong className="text-(--text-strong) text-[13px] font-semibold truncate">
-                            {document.filename}
-                          </strong>
-                          <span
-                            className={`font-mono text-[11px] tracking-[0.08em] uppercase ${
-                              readiness.ready ? "text-(--text-muted)" : "text-[#d6a24a]"
-                            }`}
-                          >
-                            {readiness.label}
-                          </span>
+                      return (
+                        <div
+                          key={document.id}
+                          className={`flex items-center justify-between p-4 cursor-default transition-colors ${
+                            selected
+                              ? "bg-(--surface-1)"
+                              : "bg-(--surface-0) hover:bg-(--surface-1)"
+                          }`}
+                          onClick={toggleSelect}
+                        >
+                          <div className="flex flex-col gap-1 min-w-0 pr-4">
+                            <strong className="text-(--text-strong) text-[13px] font-semibold truncate">
+                              {document.filename}
+                            </strong>
+                            <span
+                              className={`font-mono text-[11px] tracking-[0.08em] uppercase ${
+                                readiness.ready ? "text-(--text-muted)" : "text-[#d6a24a]"
+                              }`}
+                            >
+                              {readiness.label}
+                            </span>
+                          </div>
+                          <Switch
+                            checked={selected}
+                            onCheckedChange={toggleSelect}
+                            onClick={(e) => e.stopPropagation()}
+                          />
                         </div>
-                        <Switch
-                          checked={selected}
-                          onCheckedChange={toggleSelect}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-(--text-muted) text-[13px] mb-4">
+                    No documents processed yet — add one below.
+                  </p>
+                )}
+
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-(--text-muted) font-mono text-[11px] tracking-[0.08em] uppercase">
+                    New documents
+                  </span>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={pickingFiles || importActive}
+                    onClick={() => void addFilesToPicker()}
+                  >
+                    <FilePlus2 size={14} />
+                    {pickingFiles ? "Choosing…" : "Add files"}
+                  </button>
                 </div>
+
+                {pendingFilePaths.length > 0 ? (
+                  <div className="bg-(--surface-0) border border-(--border) rounded-xs mb-4 divide-y divide-(--border)">
+                    {pendingFilePaths.map((filePath) => (
+                      <div
+                        key={filePath}
+                        className="flex items-center justify-between p-3 gap-3"
+                      >
+                        <span
+                          className="text-(--text-strong) text-[13px] truncate"
+                          title={filePath}
+                        >
+                          {filePath.split(/[\\/]/).pop()}
+                        </span>
+                        <button
+                          type="button"
+                          className="flow-icon-button"
+                          aria-label={`Remove ${filePath.split(/[\\/]/).pop()}`}
+                          onClick={() => removePendingFile(filePath)}
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-(--text-muted) text-[13px] mb-4">
+                    No new files added yet.
+                  </p>
+                )}
 
                 <div
                   className="text-(--text-muted) font-mono text-[11px] tracking-[0.08em] uppercase mb-6"
                   aria-live="polite"
                 >
-                  {selectedReadyVersionIds.size
-                    ? `${selectedReadyVersionIds.size} DOCUMENT${selectedReadyVersionIds.size === 1 ? "" : "S"} SELECTED`
-                    : "SELECT AT LEAST ONE DOCUMENT TO CONTINUE."}
+                  {selectedReadyVersionIds.size + pendingFilePaths.length
+                    ? `${selectedReadyVersionIds.size + pendingFilePaths.length} DOCUMENT${
+                        selectedReadyVersionIds.size + pendingFilePaths.length === 1 ? "" : "S"
+                      } SELECTED`
+                    : "SELECT OR ADD AT LEAST ONE DOCUMENT TO CONTINUE."}
                 </div>
 
                 <div className="flex items-center gap-3">
@@ -5742,8 +5802,11 @@ export function IntentPage() {
                   <button
                     type="button"
                     className="flex-1 px-5 py-3 bg-(--accent) text-black! font-mono text-[12px] tracking-[0.08em] uppercase font-semibold rounded-xs hover:bg-(--accent) transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                    disabled={!selectedReadyVersionIds.size || importActive}
-                    onClick={() => void generateReadyDocuments()}
+                    disabled={
+                      (!selectedReadyVersionIds.size && !pendingFilePaths.length) ||
+                      importActive
+                    }
+                    onClick={() => void generateFromPicker()}
                   >
                     Generate selected flows
                   </button>
@@ -5971,20 +6034,6 @@ export function IntentPage() {
                 </div>
               </div>
             </section>
-          ) : null}
-          {reviewedDrafts.length ? (
-            <details className="content-card flex flex-col gap-4 w-full overflow-hidden">
-              <summary className="card-heading flex items-center justify-between gap-3 min-w-0 cursor-default">
-                <div className="min-w-0 flex-1">
-                  <small>History</small>
-                  <h2 className="break-words">Reviewed drafts</h2>
-                </div>
-                <Status>{reviewedDrafts.length}</Status>
-              </summary>
-              <div className="stack compact flex flex-col gap-2.5 w-full mt-4">
-                {reviewedDrafts.map(renderDraftRow)}
-              </div>
-            </details>
           ) : null}
           {flowToDelete ? (
             <DeleteFlowDialog
@@ -12446,9 +12495,35 @@ export function RunsPage() {
             <aside className="detail-pane" aria-label="Run details">
             {selected ? (
               <div className="detail-content">
-                <div className="detail-header">
-                  <small>QA run</small>
-                  <h2>{selected.title ?? selected.id.slice(0, 8)}</h2>
+                <div className="detail-header run-detail-header">
+                  <div className="detail-header-copy">
+                    <small>QA run</small>
+                    <h2>{selected.title ?? selected.id.slice(0, 8)}</h2>
+                  </div>
+                  <button
+                    className="detail-overflow-button"
+                    type="button"
+                    aria-label={`More actions for ${selected.title ?? selected.id.slice(0, 8)}`}
+                    aria-haspopup="menu"
+                    disabled={pendingId === selected.id}
+                    onClick={(event) => {
+                      void showMenu(event, [
+                        { id: "rename", label: "Rename…" },
+                        selected.archivedAt
+                          ? { id: "restore", label: "Restore" }
+                          : { id: "archive", label: "Archive" },
+                        { type: "separator" },
+                        { id: "delete", label: "Delete…" },
+                      ]).then((choice) => {
+                        if (choice === "rename") setRenameTarget(selected);
+                        if (choice === "archive") setArchiveTarget(selected);
+                        if (choice === "restore") void act(selected, () => restoreRun(selected.id));
+                        if (choice === "delete") setDeleteTarget(selected);
+                      });
+                    }}
+                  >
+                    <MoreHorizontal size={18} />
+                  </button>
                 </div>
                 <div className="detail-actions">
                   <button className="button primary" type="button" onClick={() => openRun(selected)}>
@@ -12466,43 +12541,6 @@ export function RunsPage() {
                       View report
                     </Link>
                   ) : null}
-                  <button
-                    className="button"
-                    type="button"
-                    disabled={pendingId === selected.id}
-                    onClick={() => setRenameTarget(selected)}
-                  >
-                    Rename
-                  </button>
-                  {selected.archivedAt ? (
-                    <button
-                      className="button"
-                      type="button"
-                      disabled={pendingId === selected.id}
-                      onClick={() => void act(selected, () => restoreRun(selected.id))}
-                    >
-                      <ArchiveRestore size={15} />
-                      Restore
-                    </button>
-                  ) : (
-                    <button
-                      className="button"
-                      type="button"
-                      disabled={pendingId === selected.id}
-                      onClick={() => setArchiveTarget(selected)}
-                    >
-                      <Archive size={15} />
-                      Archive
-                    </button>
-                  )}
-                  <button
-                    className="button danger"
-                    type="button"
-                    disabled={pendingId === selected.id}
-                    onClick={() => setDeleteTarget(selected)}
-                  >
-                    Delete
-                  </button>
                 </div>
                 <dl className="property-list">
                   <div>

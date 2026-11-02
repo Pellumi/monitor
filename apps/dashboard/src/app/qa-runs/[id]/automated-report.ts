@@ -103,6 +103,7 @@ export const MODE_LABELS: Record<string, string> = {
   ASSISTED: "Assisted",
   OBSERVATION_ONLY: "Observation only",
   AUTOMATED: "Automated",
+  AUTONOMOUS: "Autonomous",
 };
 
 /** What each mode means for an absence of evidence, per DDM-MODE-001/002. */
@@ -111,6 +112,35 @@ export const MODE_MEANINGS: Record<string, string> = {
   ASSISTED: "A person explored freely; states they did not visit say nothing about whether they exist.",
   OBSERVATION_ONLY: "Nothing was driven; this shows only what happened while the application was used.",
   AUTOMATED: "Tellann performed the declared Flow itself. A state it did not reach is only a finding about the application if the run says the application prevented it.",
+  AUTONOMOUS: "Tellann planned and drove this itself toward a stated goal. A scenario it did not reach is only a finding about the application if the run's own evidence says so, never the model's own narration.",
+};
+
+/**
+ * Where an autonomous run is, as `AutonomousRun.status` on the server names it — distinct from
+ * `EXECUTION_PHASES` below, which is the Automated run's own desktop-reported sub-state.
+ */
+export const AUTONOMOUS_RUN_STATUS_LABELS: Record<string, string> = {
+  PLANNING: "Waiting for a plan",
+  AWAITING_PLAN_APPROVAL: "Waiting for the plan to be approved",
+  RUNNING: "Running",
+  AWAITING_HUMAN: "Waiting for somebody to answer a question",
+  RECOVERING: "Recovering from an unexpected step",
+  PAUSED: "Paused",
+  VERIFYING: "Confirming the result",
+  COMPLETED: "Completed",
+  COMPLETED_INCOMPLETE: "Completed, short of the goal",
+  FAILED: "Failed",
+  CANCELLED: "Cancelled",
+};
+
+/** The five outcome states a scenario within an autonomous run's plan can be in (doc §8.3), plus RUNNING for one in progress. */
+export const AUTONOMOUS_SCENARIO_STATUS_LABELS: Record<string, string> = {
+  NOT_RUN: "Not attempted",
+  RUNNING: "Running",
+  PASS: "Passed",
+  FAIL: "Failed",
+  BLOCKED: "Blocked",
+  INCONCLUSIVE: "Inconclusive",
 };
 
 export function modeLabel(mode: string | null | undefined): string {

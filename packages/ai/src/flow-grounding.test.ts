@@ -159,6 +159,56 @@ describe('topology grounding: a state or transition cited but not found is dropp
   });
 });
 
+describe('a long, genuine evidence citation survives imperfect PDF extraction', () => {
+  // The real sentence from a user's document (quoted verbatim by the model, then clipped
+  // to 280 chars at the state's `evidence` field) — this used to be dropped because the
+  // full ~200-character citation had to appear as one unbroken substring, and PDF text
+  // extraction had reflowed the numbered sub-list it came from, inserting a line break
+  // (and dropping the word "step" once) in a place the model's quote did not have one.
+  const documentText = [
+    'When they land on the full generated plan, they see the steps and techniques spelled',
+    'out by step and if there\'s spaced repetition, it\'s indicated too … with the cta',
+    'button of this plan page being \'Study with plan\'. When they click study with plan',
+    'the system takes them to the first step of the plan.',
+  ].join('\n');
+  const evidence = 'When they land on the full generated plan, they see the steps and techniques spelled out step by step and if there\'s spaced repetition, it\'s indicated too with the cta button of this plan page being \'Study with plan\'';
+
+  it('keeps the state: most of its distinctive words are in the document even though the exact sentence is not', () => {
+    const flow = normalizeWorkflowLanguage({
+      key: 'W', name: 'W',
+      states: [{ name: 'GUEST' }, { name: 'GENERATED_PLAN_VIEW', evidence }],
+      transitions: [{ from: 'GUEST', to: 'GENERATED_PLAN_VIEW', action: 'OPEN_PLAN' }],
+    });
+    const { workflow, dropped } = groundInDocument(flow, documentText);
+    expect(workflow.states.map((state) => state.key)).toContain('GENERATED_PLAN_VIEW');
+    expect(dropped).toEqual([]);
+  });
+
+  it('a citation sharing almost no words with the document is still dropped', () => {
+    const flow = normalizeWorkflowLanguage({
+      key: 'W', name: 'W',
+      states: [{ name: 'GUEST' }, { name: 'INVENTED_STATE', evidence: 'the dashboard shows a widget summarising quarterly revenue by region and channel' }],
+      transitions: [{ from: 'GUEST', to: 'INVENTED_STATE', action: 'OPEN_DASHBOARD' }],
+    });
+    const { workflow, dropped } = groundInDocument(flow, documentText);
+    expect(workflow.states.map((state) => state.key)).not.toContain('INVENTED_STATE');
+    expect(dropped.some((issue) => issue.code === 'UNSUPPORTED_TOPOLOGY' && issue.target === 'INVENTED_STATE')).toBe(true);
+  });
+
+  it('a short citation (fewer than 6 significant words) still requires an exact match, not word-overlap', () => {
+    const flow = normalizeWorkflowLanguage({
+      key: 'W', name: 'W',
+      states: [{ name: 'GUEST' }, { name: 'PLAN_PAGE', evidence: 'the generated plan steps' }],
+      transitions: [{ from: 'GUEST', to: 'PLAN_PAGE', action: 'OPEN_PLAN' }],
+    });
+    // "generated plan steps" never appears as that exact run in documentText (it is split
+    // across "generated plan, they see the steps"), so the strict check correctly rejects it —
+    // only a long citation gets the more tolerant word-overlap check.
+    const { workflow } = groundInDocument(flow, documentText);
+    expect(workflow.states.map((state) => state.key)).not.toContain('PLAN_PAGE');
+  });
+});
+
 describe('what counts as a heading', () => {
   const flow = (heading: string) => normalizeWorkflowLanguage({
     key: 'W', name: 'W',

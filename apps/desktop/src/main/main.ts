@@ -52,6 +52,7 @@ import {
 import { LocalRunRelay, type BufferedRelayRequest } from '@tellann/local-relay';
 import { LocalApplicationLauncher, type LocalLaunchCommand } from './application-launcher';
 import { AutomatedRunManager } from './automation/automated-run-manager';
+import { createGeminiAmbiguityResolver } from './automation/browser-agent-adapter';
 import { createAutomatedRunHost } from './automation/automated-run-host';
 import { prepareContract } from './automation/contract-pipeline';
 import { verifiedAnchors } from './automation/anchor-plumbing';
@@ -316,6 +317,15 @@ function publishApplyProgress(progress: InstrumentationApplyProgress): void {
   mainWindow.webContents.send(INSTRUMENTATION_PROGRESS_CHANNEL, progress);
 }
 
+/** The native file picker shared by the "add documents" flows; null when cancelled. */
+async function pickDocumentFiles(): Promise<string[] | null> {
+  const result = await dialog.showOpenDialog(mainWindow!, {
+    title: 'Select product documents for local analysis', properties: ['openFile', 'multiSelections'],
+    filters: [{ name: 'Product documents', extensions: ['pdf', 'docx', 'md', 'markdown', 'txt', 'html', 'htm', 'json', 'yaml', 'yml'] }],
+  });
+  return result.canceled || !result.filePaths.length ? null : result.filePaths;
+}
+
 // Document imports run here rather than in the page that started them, so an
 // upload keeps going (and stays visible) after the member navigates away.
 // Channel names are local for the same reason as the instrumentation ones.
@@ -325,6 +335,8 @@ const DOCUMENT_IMPORT_RESUME_CHANNEL = 'tellann:documents:import:resume';
 const DOCUMENT_IMPORT_CANCEL_CHANNEL = 'tellann:documents:import:cancel';
 const DOCUMENT_IMPORT_DISMISS_CHANNEL = 'tellann:documents:import:dismiss';
 const DOCUMENT_IMPORT_GENERATE_CHANNEL = 'tellann:documents:import:generate';
+const DOCUMENT_IMPORT_PICK_FILES_CHANNEL = 'tellann:documents:import:pick-files';
+const DOCUMENT_IMPORT_GENERATE_MIXED_CHANNEL = 'tellann:documents:import:generate-mixed';
 const INTENT_DRAFT_APPLY_ANSWERS_CHANNEL = 'tellann:intent:draft:apply-answers';
 
 const documentImports = new DocumentImportManager({
@@ -871,6 +883,10 @@ const automatedRuns = new AutomatedRunManager(automatedHost.host, {
     write: (identity, storageState) => { writeBrowserSession(identity, storageState); },
     delete: (identity) => deleteBrowserSession(identity),
   },
+  // Only consulted for a run whose own `assistedTieBreaking` is on, and only after the code and the
+  // rendered page both failed to break the tie; a throw (no provider configured, a network failure) is
+  // the same as no opinion to `askResolver`, so supplying this is safe even with no API key set.
+  resolver: createGeminiAmbiguityResolver(),
 });
 
 function automationWorkspace(applicationId: string) {
@@ -3478,12 +3494,16 @@ function registerIpc(): void {
     if (typeof value.applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
     const existing = documentImports.get(value.applicationId);
     if (existing && (existing.running || isActiveDocumentImportStage(existing.stage))) throw new Error('INTENT_IMPORT_IN_PROGRESS');
-    const result = await dialog.showOpenDialog(mainWindow!, {
-      title: 'Select product documents for local analysis', properties: ['openFile', 'multiSelections'],
-      filters: [{ name: 'Product documents', extensions: ['pdf', 'docx', 'md', 'markdown', 'txt', 'html', 'htm', 'json', 'yaml', 'yml'] }],
-    });
-    if (result.canceled || !result.filePaths.length) return null;
-    return documentImports.startFromFiles(value.applicationId, result.filePaths, value.generateDraft === true);
+    const filePaths = await pickDocumentFiles();
+    if (!filePaths) return null;
+    return documentImports.startFromFiles(value.applicationId, filePaths, value.generateDraft === true);
+  });
+  // Lets the "Generate from documents" picker add local files to its selection
+  // before generating, without starting an import yet.
+  ipcMain.handle(DOCUMENT_IMPORT_PICK_FILES_CHANNEL, async (event) => {
+    assertTrustedSender(event);
+    const filePaths = await pickDocumentFiles();
+    return filePaths ? { filePaths } : null;
   });
   ipcMain.handle(DOCUMENT_IMPORT_GET_CHANNEL, async (event, applicationId: unknown) => {
     assertTrustedSender(event);
@@ -3518,6 +3538,24 @@ function registerIpc(): void {
         : [];
     });
     return documentImports.startFromVersions(value.applicationId, documents);
+  });
+  // The merged "Generate from documents" picker: newly chosen local files and
+  // already-processed document versions, combined into one import session.
+  ipcMain.handle(DOCUMENT_IMPORT_GENERATE_MIXED_CHANNEL, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    const value = (input ?? {}) as { applicationId?: unknown; filePaths?: unknown; documents?: unknown };
+    if (typeof value.applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    const filePaths = Array.isArray(value.filePaths)
+      ? value.filePaths.filter((item): item is string => typeof item === 'string')
+      : [];
+    if (!Array.isArray(value.documents) || value.documents.length > 50) throw new Error('INVALID_INTENT_DRAFT_REQUEST');
+    const documents = value.documents.flatMap((item) => {
+      const entry = (item ?? {}) as { versionId?: unknown; documentId?: unknown; filename?: unknown };
+      return typeof entry.versionId === 'string' && typeof entry.filename === 'string'
+        ? [{ versionId: entry.versionId, documentId: typeof entry.documentId === 'string' ? entry.documentId : null, filename: entry.filename }]
+        : [];
+    });
+    return documentImports.startFromFilesAndVersions(value.applicationId, filePaths, documents, true);
   });
   ipcMain.handle(INTENT_DRAFT_APPLY_ANSWERS_CHANNEL, async (event, input: unknown) => {
     assertTrustedSender(event);

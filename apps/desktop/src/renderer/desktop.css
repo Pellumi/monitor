@@ -1396,6 +1396,15 @@ button:disabled {
   gap: 16px;
   padding: 16px;
 }
+.run-detail-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.detail-header-copy {
+  min-width: 0;
+}
 .detail-header small {
   color: var(--text-muted);
   font-size: 11px;
@@ -1405,6 +1414,23 @@ button:disabled {
   color: var(--text-strong);
   font: 600 18px/1.25 var(--font-display);
   overflow-wrap: anywhere;
+}
+.detail-overflow-button {
+  display: grid;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  margin: -2px -4px 0 0;
+  padding: 0;
+  place-content: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-muted);
+}
+.detail-overflow-button:hover:not(:disabled) {
+  background: rgb(var(--overlay-rgb) / 0.08);
+  color: var(--text-strong);
 }
 .detail-actions {
   display: flex;

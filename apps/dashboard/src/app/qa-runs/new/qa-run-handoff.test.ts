@@ -90,3 +90,16 @@ test("a link can never select the mode that drives the application", () => {
   }
   assert.equal(normalizeQARunMode("AUTOMATED", "PRODUCTION"), "OBSERVATION_ONLY");
 });
+
+/**
+ * Autonomous runs are even more consequential than Automated ones — they plan their own actions —
+ * so the same untrusted-link exclusion applies, unchanged. Declaring one is its own session-authed
+ * form (apps/dashboard/src/app/applications/[appId]/autonomous-runs/new), never a deep-link param.
+ */
+test("a link can never select the autonomous mode either", () => {
+  for (const value of ["AUTONOMOUS", "autonomous", "Autonomous", " AUTONOMOUS "]) {
+    assert.equal(normalizeQARunMode(value, "STAGING"), "ASSISTED", value);
+    assert.equal(normalizeQARunMode(value, "DEVELOPMENT"), "ASSISTED", value);
+  }
+  assert.equal(normalizeQARunMode("AUTONOMOUS", "PRODUCTION"), "OBSERVATION_ONLY");
+});

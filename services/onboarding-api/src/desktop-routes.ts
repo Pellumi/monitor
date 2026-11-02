@@ -3,6 +3,8 @@ import { Router, raw, type NextFunction, type Request, type Response } from 'exp
 import jwt from 'jsonwebtoken';
 import {
   AuditAction,
+  AutonomousInterventionStatus,
+  AutonomousRunStatus,
   EnvironmentType,
   MemberRole,
   Prisma,
@@ -104,6 +106,22 @@ export function qaRunCreationPolicy(mode: QARunMode, hasFlowContext: boolean): {
     return { requiresFlowContext: false, usesFlowContext: hasFlowContext, initialStatus: 'RECORDING' };
   }
   return { requiresFlowContext: false, usesFlowContext: false, initialStatus: 'RECORDING' };
+}
+
+export const AUTONOMOUS_LIMIT_BOUNDS = { maxActions: [1, 500], maxModelCalls: [1, 200], maxDurationMs: [60_000, 3_600_000] } as const;
+
+/** Applies defaults and bounds to the budget an autonomous run is created with; null means the request's own values are out of bounds. */
+export function autonomousLimitsFrom(body: Record<string, unknown>): { maxActions: number; maxModelCalls: number; maxDurationMs: number } | null {
+  const read = (key: keyof typeof AUTONOMOUS_LIMIT_BOUNDS, fallback: number) => {
+    const [min, max] = AUTONOMOUS_LIMIT_BOUNDS[key];
+    const value = body[key] === undefined ? fallback : Number(body[key]);
+    return Number.isInteger(value) && value >= min && value <= max ? value : null;
+  };
+  const maxActions = read('maxActions', 50);
+  const maxModelCalls = read('maxModelCalls', 30);
+  const maxDurationMs = read('maxDurationMs', 1_800_000);
+  if (maxActions === null || maxModelCalls === null || maxDurationMs === null) return null;
+  return { maxActions, maxModelCalls, maxDurationMs };
 }
 
 export function qaRunActiveStatus(mode: QARunMode, boundaryStarted: boolean): QARunStatus {
@@ -875,6 +893,11 @@ export function createDesktopRouter(input: {
       if (!environmentId || !targetUrl) {
         return res.status(400).json({ error: 'QA_RUN_CONTEXT_REQUIRED', message: 'environmentId and targetUrl are required' });
       }
+      // AUTONOMOUS runs carry a goal and budget instead of a pinned target/profile, and need the
+      // sibling AutonomousRun row created in the same transaction — POST .../autonomous-runs does both.
+      if (mode === QARunMode.AUTONOMOUS) {
+        return res.status(400).json({ error: 'USE_AUTONOMOUS_RUNS_ENDPOINT', message: 'Create an autonomous run via POST /applications/:appId/autonomous-runs.' });
+      }
       if (!Object.values(QARunMode).includes(mode)) {
         return res.status(400).json({ error: 'Invalid QA run mode' });
       }
@@ -1114,6 +1137,235 @@ export function createDesktopRouter(input: {
       res.json(withRunTitles(runs));
     },
   );
+
+  // -- Autonomous QA runs -------------------------------------------------------------------------
+  //
+  // An AUTONOMOUS run's own config (goal, budget, plan, scenarios, interventions) lives in
+  // `AutonomousRun` and its child tables rather than in `QARun.automation`, because a plan a model
+  // proposes toward a goal is versioned and re-approved over the run's life, unlike an AUTOMATED
+  // run's pinned target/profile. Every route below shares the ordinary dashboard/desktop session
+  // auth (`verifyJwt`) the rest of this file uses — there is no separate device-only credential.
+
+  /** Scoped the same way every other run lookup in this file is: owned by an org the caller belongs to. */
+  async function authorizedAutonomousRun(runId: string, userId: string) {
+    return prisma.autonomousRun.findFirst({
+      where: { runId, run: { organization: { memberships: { some: { userId } } } } },
+      include: { run: { select: { id: true, applicationId: true, organizationId: true, status: true, createdByUserId: true } } },
+    });
+  }
+
+  router.post(
+    '/applications/:appId/autonomous-runs',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const { environmentId, targetUrl, goal, constraints } = req.body ?? {};
+      if (!environmentId || !targetUrl) {
+        return res.status(400).json({ error: 'QA_RUN_CONTEXT_REQUIRED', message: 'environmentId and targetUrl are required' });
+      }
+      if (typeof goal !== 'string' || !goal.trim() || goal.length > 2000) {
+        return res.status(400).json({ error: 'INVALID_GOAL', message: 'goal must be 1-2000 characters.' });
+      }
+      let parsedTarget: URL;
+      try {
+        parsedTarget = new URL(String(targetUrl));
+        if (!['http:', 'https:'].includes(parsedTarget.protocol) || parsedTarget.username || parsedTarget.password) throw new Error();
+      } catch {
+        return res.status(400).json({ error: 'targetUrl must be an http(s) URL without embedded credentials' });
+      }
+      const limits = autonomousLimitsFrom(req.body ?? {});
+      if (!limits) return res.status(400).json({ error: 'INVALID_AUTONOMOUS_LIMITS' });
+
+      const environment = await prisma.environment.findFirst({
+        where: { id: String(environmentId), applicationId: req.params.appId },
+        include: { application: { select: { organizationId: true } } },
+      });
+      if (!environment?.application.organizationId) return res.status(404).json({ error: 'Environment not found' });
+      if (!productionRunModeAllowed(environment.type, QARunMode.AUTONOMOUS)) {
+        return res.status(403).json({ error: 'PRODUCTION_ACTIVE_CONTROL_BLOCKED', message: 'Production environments support observation-only runs.' });
+      }
+      if (!await entitlementChecker.canAccess(environment.application.organizationId, Feature.AUTONOMOUS_QA_RUNS)) {
+        return res.status(403).json({ error: 'FEATURE_NOT_ENTITLED', feature: Feature.AUTONOMOUS_QA_RUNS });
+      }
+      const sanitizedTargetUrl = sanitizeQaUrl(parsedTarget.toString());
+      if (!sanitizedTargetUrl) return res.status(400).json({ error: 'targetUrl could not be sanitized' });
+
+      const run = await prisma.qARun.create({
+        data: {
+          organizationId: environment.application.organizationId,
+          applicationId: req.params.appId,
+          environmentId: environment.id,
+          createdByUserId: req.user!.id,
+          mode: QARunMode.AUTONOMOUS,
+          captureTracks: ['FRONTEND'],
+          targetUrl: sanitizedTargetUrl,
+          autonomousRun: {
+            create: {
+              goal: goal.trim(),
+              constraints: (constraints && typeof constraints === 'object' ? constraints : {}) as Prisma.InputJsonValue,
+              maxActions: limits.maxActions,
+              maxModelCalls: limits.maxModelCalls,
+              maxDurationMs: limits.maxDurationMs,
+            },
+          },
+        },
+        include: { autonomousRun: true },
+      });
+      res.status(201).json({ runId: run.id, autonomousRunId: run.autonomousRun!.id, status: run.autonomousRun!.status });
+    },
+  );
+
+  /** Lists autonomous runs for an application — the dashboard's full list, or the desktop's pull of `?status=PLANNING` goals awaiting a plan. */
+  router.get(
+    '/applications/:appId/autonomous-runs',
+    verifyJwt,
+    verifyAppOwnership,
+    async (req: DesktopRequest, res: Response) => {
+      const status = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : '';
+      if (status && !Object.values(AutonomousRunStatus).includes(status as AutonomousRunStatus)) {
+        return res.status(400).json({ error: 'INVALID_AUTONOMOUS_RUN_STATUS' });
+      }
+      const runs = await prisma.autonomousRun.findMany({
+        where: { run: { applicationId: req.params.appId }, ...(status ? { status: status as AutonomousRunStatus } : {}) },
+        include: { run: { select: { id: true, environmentId: true, targetUrl: true, createdAt: true, createdByUserId: true } } },
+        orderBy: { createdAt: 'desc' },
+        take: Math.min(Math.max(Number(req.query.limit) || 50, 1), 100),
+      });
+      res.json(runs);
+    },
+  );
+
+  router.get('/qa-runs/:runId/autonomous/state', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const [latestPlan, scenarioCounts] = await Promise.all([
+      prisma.autonomousPlanVersion.findFirst({ where: { autonomousRunId: autonomous.id }, orderBy: { version: 'desc' } }),
+      prisma.autonomousScenario.groupBy({
+        by: ['status'],
+        where: { autonomousRunId: autonomous.id, planVersion: autonomous.planVersion },
+        _count: { _all: true },
+      }),
+    ]);
+    res.json({
+      ...autonomous,
+      latestPlan,
+      scenarioCounts: Object.fromEntries(scenarioCounts.map((row) => [row.status, row._count._all])),
+    });
+  });
+
+  router.get('/qa-runs/:runId/autonomous/actions', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const actions = await prisma.autonomousAction.findMany({
+      where: { autonomousRunId: autonomous.id },
+      orderBy: { sequence: 'asc' },
+      take: Math.min(Math.max(Number(req.query.limit) || 200, 1), 500),
+    });
+    res.json(actions);
+  });
+
+  router.get('/qa-runs/:runId/autonomous/interventions', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const status = typeof req.query.status === 'string' ? req.query.status.trim().toUpperCase() : '';
+    if (status && !Object.values(AutonomousInterventionStatus).includes(status as AutonomousInterventionStatus)) {
+      return res.status(400).json({ error: 'INVALID_INTERVENTION_STATUS' });
+    }
+    const interventions = await prisma.autonomousIntervention.findMany({
+      where: { autonomousRunId: autonomous.id, ...(status ? { status: status as AutonomousInterventionStatus } : {}) },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(interventions);
+  });
+
+  /** A person — in the dashboard or in the desktop — answers a question the run is waiting on. */
+  router.post('/qa-runs/:runId/autonomous/interventions/:interventionId/respond', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const intervention = await prisma.autonomousIntervention.findFirst({
+      where: { id: req.params.interventionId, autonomousRunId: autonomous.id },
+    });
+    if (!intervention) return res.status(404).json({ error: 'Intervention not found' });
+    if (intervention.status !== AutonomousInterventionStatus.PENDING) {
+      return res.status(409).json({ error: 'INTERVENTION_NOT_PENDING' });
+    }
+    const response = typeof req.body?.response === 'string' ? req.body.response : '';
+    if (!intervention.allowedResponses.includes(response)) {
+      return res.status(400).json({ error: 'INVALID_RESPONSE', message: `response must be one of: ${intervention.allowedResponses.join(', ')}` });
+    }
+    const updated = await prisma.autonomousIntervention.update({
+      where: { id: intervention.id },
+      data: { status: AutonomousInterventionStatus.RESOLVED, response, respondedByUserId: req.user!.id, respondedAt: new Date() },
+    });
+    res.json(updated);
+  });
+
+  /** The dashboard, or anyone with access, asks a running autonomous run to stop. The desktop picks this up over the per-run event stream it already watches. */
+  router.post('/qa-runs/:runId/autonomous/cancel', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const updated = await prisma.autonomousRun.update({
+      where: { id: autonomous.id },
+      data: { cancelRequestedAt: autonomous.cancelRequestedAt ?? new Date() },
+    });
+    res.json(updated);
+  });
+
+  /**
+   * The desktop submits a model-generated plan, already approved locally (the same synchronous,
+   * in-app "approve and continue" an execution profile gets) — this only records it. Submitting a
+   * plan is also, for the run as a whole, the one thing `@tellann/agent-policy`'s
+   * `authorizeAutonomousAction` checks for anything short of a high-impact action: its scope
+   * approval. Re-affirmed on every version, including a replan, rather than only the first.
+   */
+  router.post('/qa-runs/:runId/autonomous/plan', verifyJwt, async (req: DesktopRequest, res: Response) => {
+    const autonomous = await authorizedAutonomousRun(req.params.runId, req.user!.id);
+    if (!autonomous) return res.status(404).json({ error: 'Autonomous run not found' });
+    const { plan, reason, provider, model, promptHash } = req.body ?? {};
+    const scenarios = Array.isArray(plan?.scenarios) ? plan.scenarios : null;
+    if (!plan || typeof plan.goal !== 'string' || !scenarios || scenarios.length === 0
+      || scenarios.some((scenario: unknown) => !scenario || typeof (scenario as Record<string, unknown>).key !== 'string'
+        || typeof (scenario as Record<string, unknown>).title !== 'string'
+        || !Array.isArray((scenario as Record<string, unknown>).targetStateKeys))) {
+      return res.status(400).json({ error: 'INVALID_PLAN' });
+    }
+    const nextVersion = autonomous.planVersion + 1;
+    const now = new Date();
+    const [, , updated] = await prisma.$transaction([
+      prisma.autonomousPlanVersion.create({
+        data: {
+          autonomousRunId: autonomous.id,
+          version: nextVersion,
+          plan: plan as Prisma.InputJsonValue,
+          reason: typeof reason === 'string' ? reason.slice(0, 500) : null,
+          provider: typeof provider === 'string' ? provider : null,
+          model: typeof model === 'string' ? model : null,
+          promptHash: typeof promptHash === 'string' ? promptHash : null,
+          approvedAt: now,
+          approvedByUserId: req.user!.id,
+        },
+      }),
+      prisma.autonomousScenario.createMany({
+        data: scenarios.map((scenario: { key: string; title: string; successCriteria?: string[] }) => ({
+          autonomousRunId: autonomous.id,
+          planVersion: nextVersion,
+          key: scenario.key,
+          title: scenario.title,
+          successCriteria: Array.isArray(scenario.successCriteria) ? scenario.successCriteria.filter((value): value is string => typeof value === 'string') : [],
+        })),
+      }),
+      prisma.autonomousRun.update({
+        where: { id: autonomous.id },
+        data: {
+          planVersion: nextVersion,
+          status: AutonomousRunStatus.RUNNING,
+          scopeApprovedAt: now,
+          scopeApprovedByUserId: req.user!.id,
+        },
+      }),
+    ]);
+    res.status(201).json(updated);
+  });
 
   /** Resolves a run the way every mutating route below needs it: owned by the requesting user, not yet gone. */
   async function ownedQaRunForMutation(req: DesktopRequest) {

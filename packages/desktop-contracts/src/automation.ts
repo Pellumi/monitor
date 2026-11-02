@@ -13,6 +13,15 @@ export const QA_RUN_MODES = ['GUIDED', 'ASSISTED', 'OBSERVATION_ONLY', 'AUTOMATE
 export const QARunModeSchema = z.enum(QA_RUN_MODES);
 export type QARunMode = z.infer<typeof QARunModeSchema>;
 
+/**
+ * How dangerous a proposed autonomous action is, ordered by what it would take to undo it.
+ * The same tiers both `@tellann/agent-policy` (authorization) and `@tellann/automation-engine`
+ * (classification, mapped 1:1 from the existing `ActionClass`) import, so the two never drift.
+ */
+export const AUTONOMOUS_RISK_TIERS = ['READ_ONLY', 'REVERSIBLE', 'STATE_CHANGING', 'HIGH_IMPACT'] as const;
+export const AutonomousRiskTierSchema = z.enum(AUTONOMOUS_RISK_TIERS);
+export type AutonomousRiskTier = z.infer<typeof AutonomousRiskTierSchema>;
+
 /** Evidence events emitted by the desktop automation loop. Never emitted by the application under test. */
 export const QA_AUTOMATION_EVENT_TYPES = [
   'QA_AUTOMATION_PLAN_CREATED',
@@ -44,6 +53,27 @@ export const QA_AUTOMATION_EVENT_TYPES = [
   'QA_AUTOMATION_RESPONSIVE_SAMPLE',
   /** What is wrong with the Flow as a person would meet it, each finding carrying the measurement behind it. */
   'QA_AUTOMATION_UI_QUALITY',
+] as const;
+
+/**
+ * Evidence events emitted by the desktop's autonomous sequencer (`@tellann/automation-engine`'s
+ * `runAutonomousExploration`). A parallel tuple to `QA_AUTOMATION_EVENT_TYPES` rather than an
+ * extension of it, because an autonomous run's evidence is about a model-sequenced scenario, not
+ * a pinned Flow walk — spread into `QAEvidenceEventTypeSchema` the same way, so there is still
+ * exactly one place that decides what may cross the evidence-ingestion wire.
+ */
+export const AUTONOMOUS_EVENT_TYPES = [
+  'AUTONOMOUS_PLAN_CREATED',
+  'AUTONOMOUS_SCENARIO_STARTED',
+  'AUTONOMOUS_ACTION_PROPOSED',
+  'AUTONOMOUS_ACTION_EXECUTED',
+  'AUTONOMOUS_ACTION_BLOCKED',
+  'AUTONOMOUS_RECOVERY_ATTEMPTED',
+  'AUTONOMOUS_INTERVENTION_REQUESTED',
+  'AUTONOMOUS_INTERVENTION_RESOLVED',
+  'AUTONOMOUS_REPLAN',
+  'AUTONOMOUS_SCENARIO_COMPLETED',
+  'AUTONOMOUS_STOPPED',
 ] as const;
 
 /** Where an Automated Run currently is. A substate carried in `QARun.automation`; the public run lifecycle is unchanged. */

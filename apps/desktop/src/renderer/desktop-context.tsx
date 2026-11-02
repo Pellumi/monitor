@@ -206,6 +206,14 @@ type DesktopContextValue = {
     applicationId: string,
     documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
   ): Promise<DocumentImportView>;
+  /** Opens the file picker without starting an import; null when nothing was chosen. */
+  pickDocumentFiles(): Promise<string[] | null>;
+  /** Combines newly chosen local files and already-processed document versions into one generation request. */
+  generateFromDocumentsAndVersions(
+    applicationId: string,
+    filePaths: string[],
+    documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
+  ): Promise<DocumentImportView>;
   onDocumentImportProgress(callback: (view: DocumentImportView) => void): () => void;
   applyIntentConflictAnswers(applicationId: string, draftId: string, conflictResolutions: Record<string, string>): Promise<IntentDraftJobCreated>;
   getDocumentJob(applicationId: string, jobId: string): Promise<DocumentProcessingJob>;
@@ -816,6 +824,9 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     cancelDocumentImport: (applicationId) => perform(() => bridge().documents.cancelImport(applicationId)),
     dismissDocumentImport: (applicationId) => bridge().documents.dismissImport(applicationId),
     generateFromDocumentVersions: (applicationId, documents) => perform(() => bridge().documents.generateFromVersions(applicationId, documents)),
+    pickDocumentFiles: () => perform(async () => (await bridge().documents.pickFiles())?.filePaths ?? null),
+    generateFromDocumentsAndVersions: (applicationId, filePaths, documents) =>
+      perform(() => bridge().documents.generateFromFilesAndVersions(applicationId, filePaths, documents)),
     onDocumentImportProgress: (callback) => window.tellann?.documents.onImportProgress?.(callback) ?? (() => undefined),
     applyIntentConflictAnswers: (applicationId, draftId, conflictResolutions) =>
       perform(() => bridge().intent.applyConflictAnswers(applicationId, draftId, conflictResolutions)),

@@ -5,6 +5,7 @@ import {
   automationTargetsConsistent,
   QARunModeSchema,
   QA_AUTOMATION_EVENT_TYPES,
+  AUTONOMOUS_EVENT_TYPES,
 } from './automation';
 
 export * from './automation';
@@ -92,6 +93,7 @@ export const QAEvidenceEventTypeSchema = z.enum([
   'QA_BACKEND_ERROR',
   'QA_BACKEND_DATA_ACCESS',
   ...QA_AUTOMATION_EVENT_TYPES,
+  ...AUTONOMOUS_EVENT_TYPES,
 ]);
 
 export const QAPendingProtectedValueSchema = z.object({

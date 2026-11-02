@@ -132,6 +132,27 @@ describe('normalizeWorkflowLanguage', () => {
     const workflow = normalizeWorkflowLanguage({ key: 'C', name: 'C', states: journey.states, transitions: journey.transitions });
     expect(lintWorkflowLanguage(workflow)).toEqual([]);
   });
+
+  it('clips a long evidence citation at a word boundary, never mid-word', () => {
+    // A citation this long is checked by word-overlap later (see flow-grounding.ts), so
+    // shearing a word in half at the cut would just throw away one more matching word for
+    // no reason — and previously (clipping to 200 chars without regard for word
+    // boundaries) made a real citation fail an exact-match check outright.
+    const long = 'When they land on the full generated plan, they see the steps and techniques spelled out step by step and if there\'s spaced repetition, it\'s indicated too with the cta button of this plan page being \'Study with plan\'. When they click study with plan the system takes them to the first step of the plan, where the full question bank covering all possible topics is sampled for a pre-assessment.';
+    expect(long.length).toBeGreaterThan(280);
+    const workflow = normalizeWorkflowLanguage({
+      key: 'W', name: 'W',
+      states: [{ name: 'GENERATED_PLAN_VIEW', evidence: long }],
+      transitions: [],
+    });
+    const evidence = workflow.states[0].evidence as string;
+    expect(evidence.length).toBeLessThanOrEqual(280);
+    expect(long.startsWith(evidence)).toBe(true);
+    expect(/\s$/.test(evidence)).toBe(false);
+    // The cut lands on a real word boundary: what follows in the source is a space, not
+    // the middle of the next word.
+    expect(long[evidence.length]).toBe(' ');
+  });
 });
 
 describe('assignFlowRoles', () => {

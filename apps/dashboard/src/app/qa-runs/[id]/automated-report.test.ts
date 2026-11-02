@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { anomalyText, blockedActionRows, codeEvidenceEntries, durationText, easeText, effectRows, modeLabel, MODE_MEANINGS, outcomeSummary, pinnedRows, reconciliationRows, renderTimingRows, responsiveGrid, retainedTraceRows, uiQualityRows, unreachedLabel } from "./automated-report";
+import { anomalyText, AUTONOMOUS_RUN_STATUS_LABELS, AUTONOMOUS_SCENARIO_STATUS_LABELS, blockedActionRows, codeEvidenceEntries, durationText, easeText, effectRows, modeLabel, MODE_MEANINGS, outcomeSummary, pinnedRows, reconciliationRows, renderTimingRows, responsiveGrid, retainedTraceRows, uiQualityRows, unreachedLabel } from "./automated-report";
 import type { AutomatedSection } from "./automated-report";
 
 const section = (overrides: Partial<AutomatedSection["outcome"]> = {}): AutomatedSection => ({
@@ -14,13 +14,23 @@ const section = (overrides: Partial<AutomatedSection["outcome"]> = {}): Automate
 });
 
 test("every mode is labelled and says what an absence of evidence means", () => {
-  for (const mode of ["GUIDED", "ASSISTED", "OBSERVATION_ONLY", "AUTOMATED"]) {
+  for (const mode of ["GUIDED", "ASSISTED", "OBSERVATION_ONLY", "AUTOMATED", "AUTONOMOUS"]) {
     assert.notEqual(modeLabel(mode), mode);
     assert.ok(MODE_MEANINGS[mode]);
   }
   assert.equal(modeLabel("AUTOMATED"), "Automated");
+  assert.equal(modeLabel("AUTONOMOUS"), "Autonomous");
   assert.equal(modeLabel(null), "Not recorded", "a report from before modes were recorded");
   assert.equal(modeLabel("SOMETHING_NEW"), "SOMETHING_NEW");
+});
+
+test("every AutonomousRun status and scenario status has a label", () => {
+  for (const status of ["PLANNING", "AWAITING_PLAN_APPROVAL", "RUNNING", "AWAITING_HUMAN", "RECOVERING", "PAUSED", "VERIFYING", "COMPLETED", "COMPLETED_INCOMPLETE", "FAILED", "CANCELLED"]) {
+    assert.ok(AUTONOMOUS_RUN_STATUS_LABELS[status], status);
+  }
+  for (const status of ["NOT_RUN", "RUNNING", "PASS", "FAIL", "BLOCKED", "INCONCLUSIVE"]) {
+    assert.ok(AUTONOMOUS_SCENARIO_STATUS_LABELS[status], status);
+  }
 });
 
 test("a successful run says every step was performed", () => {

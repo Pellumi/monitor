@@ -300,6 +300,14 @@ declare global {
           applicationId: string,
           documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
         ): Promise<DocumentImportView>;
+        /** Opens the file picker without starting an import; resolves to null when no file was chosen. */
+        pickFiles(): Promise<{ filePaths: string[] } | null>;
+        /** Combines newly chosen local files and already-processed document versions into one import session. */
+        generateFromFilesAndVersions(
+          applicationId: string,
+          filePaths: string[],
+          documents: Array<{ versionId: string; documentId: string | null; filename: string }>,
+        ): Promise<DocumentImportView>;
         onImportProgress(callback: (view: DocumentImportView) => void): () => void;
       };
       runs: {

@@ -9,6 +9,7 @@
     "test": "tsc && node --test dist/*.test.js"
   },
   "dependencies": {
+    "@tellann/agent-policy": "workspace:*",
     "@tellann/desktop-contracts": "workspace:*",
     "@tellann/shared": "workspace:*"
   },

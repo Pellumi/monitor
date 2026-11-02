@@ -503,11 +503,17 @@
   align-items: stretch;
   gap: 6px;
 }
-.flow-grounding-summary {
+.flow-grounding-toolbar {
   display: flex;
   align-items: center;
+  gap: 4px;
+}
+.flow-grounding-summary {
+  display: flex;
+  flex: 1;
+  align-items: center;
   gap: 12px;
-  width: 100%;
+  min-width: 0;
   padding: 0;
   border: none;
   background: none;
@@ -515,6 +521,9 @@
   font: inherit;
   text-align: left;
   cursor: pointer;
+}
+.flow-grounding-dismiss {
+  flex: none;
 }
 .flow-grounding-coverage {
   color: var(--text-muted);
