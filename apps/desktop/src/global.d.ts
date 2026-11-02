@@ -101,6 +101,8 @@ declare global {
   type CodebaseAnalysisView = {
     mode: 'cloud' | 'local';
     source: 'cloud' | 'local';
+    /** Whether this analysis describes the currently attached workspace snapshot. */
+    current: boolean;
     /** A local run whose worker died with a previous desktop process. */
     interrupted: boolean;
     uploadProgress: { sent: number; total: number } | null;

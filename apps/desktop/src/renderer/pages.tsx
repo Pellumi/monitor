@@ -109,6 +109,7 @@ import type {
   DeclaredFlowDetail,
   DeclaredFlowSummary,
   DeclaredStateSuggestion,
+  CodebaseAnalysis,
   DesktopApplication,
   FlowReviewPreview,
   FlowSuggestionMeta,
@@ -150,6 +151,7 @@ import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-c
 import { FlowEditor } from "./flow-editor/flow-editor";
 import { DocumentGenerateDialog } from "./document-generate-dialog";
 import { transitionDeclarationSummary } from "@tellann/flow-layout";
+import { workspaceAnalysisSummary } from "./workspace-analysis-summary";
 import {
   flowBindingForEnvironment,
   flowInitializationHref,
@@ -1494,7 +1496,78 @@ export function WorkspaceDetails() {
     busy,
   } = useProject();
   const [pathCopied, setPathCopied] = useState(false);
+  const [deepAnalysis, setDeepAnalysis] = useState<{
+    snapshotKey: string;
+    value: CodebaseAnalysis | null;
+  } | null>(null);
+  const [documentCount, setDocumentCount] = useState<{
+    snapshotKey: string;
+    value: number;
+  } | null>(null);
+  const snapshotKey = workspace
+    ? [
+        projectId,
+        workspace.snapshot.repositoryFingerprint,
+        workspace.snapshot.workingTreeHash ?? workspace.snapshot.revision ?? "no-revision",
+        workspace.snapshot.dirty ? "dirty" : "clean",
+      ].join(":")
+    : null;
+
+  useEffect(() => {
+    if (!projectId || !workspace || !snapshotKey) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refreshAnalysis = async () => {
+      try {
+        const current = await window.tellann?.projects.getCodebaseAnalysis(projectId);
+        if (cancelled) return;
+        setDeepAnalysis({
+          snapshotKey,
+          value: current?.current ? current.analysis : null,
+        });
+        const status = current?.job?.status ?? current?.analysis?.status;
+        if (!current?.current || !current.analysis || (status && [
+          "QUEUED",
+          "INGESTING",
+          "PARSING",
+          "LINKING",
+          "GRAPHING",
+          "DISCOVERING_FEATURES",
+          "ANALYZING_ARCHITECTURE",
+          "SUMMARIZING",
+        ].includes(status))) {
+          timer = setTimeout(refreshAnalysis, 1_500);
+        }
+      } catch {
+        // Retain the scan fallback and retry in case the worker is restarting.
+        if (!cancelled) timer = setTimeout(refreshAnalysis, 5_000);
+      }
+    };
+
+    void refreshAnalysis();
+    void window.tellann?.documents.list(projectId)
+      .then((access) => {
+        if (!cancelled && !access.accessDenied) {
+          setDocumentCount({ snapshotKey, value: access.documents.length });
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [projectId, snapshotKey]);
+
   if (!projectId || !application) return null;
+  const analysisSummary = workspace
+    ? workspaceAnalysisSummary(
+        workspace.snapshot,
+        deepAnalysis?.snapshotKey === snapshotKey ? deepAnalysis.value : null,
+        documentCount?.snapshotKey === snapshotKey ? documentCount.value : null,
+      )
+    : null;
   return (
     <>
       <QaBranchNotice projectId={projectId} />
@@ -1919,15 +1992,15 @@ export function WorkspaceDetails() {
             <dl className="summary-grid">
               <div>
                 <dt>Routes</dt>
-                <dd>{workspace.snapshot.routes.length}</dd>
+                <dd>{analysisSummary?.routes ?? workspace.snapshot.routes.length}</dd>
               </div>
               <div>
                 <dt>Endpoints</dt>
-                <dd>{workspace.snapshot.endpoints.length}</dd>
+                <dd>{analysisSummary?.endpoints ?? workspace.snapshot.endpoints.length}</dd>
               </div>
               <div>
                 <dt>Documents</dt>
-                <dd>{workspace.snapshot.documentation.length}</dd>
+                <dd>{analysisSummary?.documents ?? workspace.snapshot.documentation.length}</dd>
               </div>
               <div>
                 <dt>Secrets excluded</dt>
@@ -5093,11 +5166,20 @@ export function IntentPage() {
 
   const refresh = useCallback(async () => {
     if (!projectId) return;
-    const [nextFlows, access] = await Promise.all([
-      getDeclaredFlows(projectId).catch(() => []),
+    const [flowsResult, access] = await Promise.all([
+      getDeclaredFlows(projectId).then(
+        (value) => ({ ok: true as const, value }),
+        (error: unknown) => ({ ok: false as const, error }),
+      ),
       getDocuments(projectId),
     ]);
-    setFlows(nextFlows);
+    if (flowsResult.ok) {
+      setFlows(flowsResult.value);
+    } else {
+      // Keep whatever flows are already shown rather than blanking the list;
+      // a failed refresh should read as an error, not as "no flows exist".
+      setActionMessage(intentErrorMessage(flowsResult.error));
+    }
     setDocuments(access.documents);
     setDocumentAutomationAvailable(access.entitled);
     if (access.entitled) {

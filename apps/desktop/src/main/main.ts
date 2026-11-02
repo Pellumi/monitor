@@ -3729,6 +3729,19 @@ function registerIpc(): void {
     // Fills the branch and revision of analyses stored before they were carried
     // through, and reports whether the folder is a Git working tree at all.
     const workspaceSnapshot = readLocalState<StoredWorkspace>(localWorkspaceKey(applicationId))?.snapshot;
+    const analysisCurrent = Boolean(
+      workspaceSnapshot
+      && state.analysis
+      && state.repositoryFingerprint === workspaceSnapshot.repositoryFingerprint
+      && (
+        state.workingTreeHash && workspaceSnapshot.workingTreeHash
+          ? state.workingTreeHash === workspaceSnapshot.workingTreeHash
+          : !workspaceSnapshot.dirty
+            && state.analysis?.revision === workspaceSnapshot.revision
+            && state.analysis?.branch === workspaceSnapshot.branch
+            && Boolean(state.analysis?.dirty) === workspaceSnapshot.dirty
+      ),
+    );
     const gitDetected = hasGitDirectory(state.workspaceRoot);
 
     if (state.mode === 'local' || !state.cloudJobId) {
@@ -3741,6 +3754,7 @@ function registerIpc(): void {
       return {
         mode: state.mode,
         source: 'local' as const,
+        current: analysisCurrent,
         interrupted: Boolean(stale),
         uploadProgress: state.uploadProgress,
         analysis: withSnapshotGitDetails(state.analysis, workspaceSnapshot),
@@ -3754,6 +3768,7 @@ function registerIpc(): void {
       return {
         mode: 'cloud' as const,
         source: 'cloud' as const,
+        current: analysisCurrent,
         interrupted: false,
         uploadProgress: state.uploadProgress,
         gitDetected,
@@ -3780,6 +3795,7 @@ function registerIpc(): void {
       return {
         mode: 'cloud' as const,
         source: 'cloud' as const,
+        current: analysisCurrent,
         interrupted: false,
         uploadProgress: state.uploadProgress,
         analysis: withSnapshotGitDetails(state.analysis, workspaceSnapshot),
