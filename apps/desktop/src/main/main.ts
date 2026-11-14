@@ -4532,6 +4532,7 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const state = observer.getState();
     if (!state) throw new Error('NO_ACTIVE_RUN');
+    if (automatedRuns.ownsRun(state.runId)) throw new Error('RUN_OWNED_BY_AUTOMATION');
     relay.setPaused(true);
     const local = await observer.pause(true);
     try {
@@ -4548,6 +4549,7 @@ function registerIpc(): void {
     assertTrustedSender(event);
     const state = observer.getState();
     if (!state) throw new Error('NO_ACTIVE_RUN');
+    if (automatedRuns.ownsRun(state.runId)) throw new Error('RUN_OWNED_BY_AUTOMATION');
     const cloudState = await cloud.resumeRun(state.runId);
     relay.setPaused(false);
     const local = await observer.pause(false);
@@ -4597,6 +4599,8 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.endGuidedRun, async (event) => {
     assertTrustedSender(event);
+    const state = observer.getState();
+    if (state && automatedRuns.ownsRun(state.runId)) throw new Error('RUN_OWNED_BY_AUTOMATION');
     return completeActiveRun('MANUAL_STOP_BEFORE_TERMINAL');
   });
   ipcMain.handle(IPC.getRunState, (event) => {

@@ -70,6 +70,7 @@ import {
   Trash2,
   TriangleAlert,
   Unlock,
+  UserRound,
   Workflow,
   X,
 } from "lucide-react";
@@ -123,6 +124,7 @@ import type {
   SourceDocumentSummary,
   DocumentImportResult,
   IntentDraftJob,
+  AutomatedRunStatus,
 } from "@tellann/desktop-contracts";
 import type { GuidedRunState, LiveEvidence } from "@tellann/browser-observer";
 import { useDesktop, isRunInProgress, normalizeDesktopError } from "./desktop-context";
@@ -145,7 +147,16 @@ import {
 } from "./components/desktop-ui";
 import { observedDraftStateNames, rankObservedFlowCandidates } from "./qa-run-draft";
 import { AppWindow, Info } from "lucide-react";
-import { AutomatedRunLive, AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
+import { AutomatedRunSetup, isAutomatedRunActive, useAutomatedRunStatus, useAutomationOptions } from "./automated-run";
+import {
+  AutomatedEventsLog,
+  AutomatedHandoverCard,
+  AutomatedOutcomeCard,
+  AutomatedPreparingView,
+  AutomatedRunPhaseFacts,
+  AutomatedStopControl,
+  useAutomatedRunControl,
+} from "./automated-run-live";
 import { automatedRunBlockers, buildAutomatedStartInput, declaredFlowLogin, flowRequirementBlockers, isLoopbackApplicationUrl, reconcileAutomatedResourceSelection, terminalChoices } from "./automation-shared";
 import type { AutomatedRunRefusal, AutomatedSelection } from "@tellann/desktop-contracts";
 import { FlowEditor } from "./flow-editor/flow-editor";
@@ -12842,22 +12853,25 @@ function RunTable({
   );
 }
 
-/** The live view of an Automated run. Reachable from the start form and from anywhere the run's notification leads. */
+/**
+ * A thin redirector, kept for bookmarks and back-navigation. A run in progress
+ * is watched from `/qa-runs/:runId/live` like every other mode now, so this
+ * page's only job is to send the operator there as soon as one exists.
+ */
 export function AutomatedRunPage() {
   const status = useAutomatedRunStatus();
   const { projectId } = useProject();
+  const navigate = useNavigate();
+  const active = status && projectId && status.applicationId === projectId && isAutomatedRunActive(status);
+  useEffect(() => {
+    if (active) navigate(`/applications/${projectId}/qa-runs/${status.runId}/live`, { replace: true });
+  }, [active, navigate, projectId, status]);
+  if (active) return null;
   return (
-    <Page
-      title="Automated run"
-      description={status ? "Tellann is running the Flow for you." : "No Automated run is in progress."}
-    >
-      {status ? (
-        <AutomatedRunLive status={status} />
-      ) : (
-        <div className="context-banner">
-          Nothing is running. <Link className="text-link" to={projectId ? `/applications/${projectId}/qa-runs/new?mode=AUTOMATED` : "/"}>Start an Automated run</Link>
-        </div>
-      )}
+    <Page title="Automated run" description="No Automated run is in progress.">
+      <div className="context-banner">
+        Nothing is running. <Link className="text-link" to={projectId ? `/applications/${projectId}/qa-runs/new?mode=AUTOMATED` : "/"}>Start an Automated run</Link>
+      </div>
     </Page>
   );
 }
@@ -13156,7 +13170,7 @@ export function NewRunPage() {
           setAutomatedRefusal(result.refusal);
           return;
         }
-        navigate(`/applications/${projectId}/qa-runs/automated`);
+        navigate(`/applications/${projectId}/qa-runs/${result.status.runId}/live`);
         return;
       }
       const run = await startRun({
@@ -13506,7 +13520,14 @@ export function NewRunPage() {
               <TriangleAlert size={16} />
               <span>An Automated run is going on this device. Tellann runs one at a time.</span>
             </div>
-            <button className="button primary" type="button" onClick={() => navigate(`/applications/${projectId}/qa-runs/automated`)}>
+            <button
+              className="button primary"
+              type="button"
+              onClick={() =>
+                automatedStatus &&
+                navigate(`/applications/${automatedStatus.applicationId}/qa-runs/${automatedStatus.runId}/live`)
+              }
+            >
               <Activity size={16} />
               Watch the run
             </button>
@@ -13619,6 +13640,21 @@ const EVIDENCE_TABS: Array<{
   { value: "PERFORMANCE", label: "Performance", icon: Gauge, kinds: ["PERFORMANCE", "ACCESSIBILITY"] },
   { value: "FINDINGS", label: "Findings", icon: AlertTriangle, kinds: [] },
 ];
+
+type AutomatedEvidenceTabValue = EvidenceTabValue | "ACTIVITY";
+
+/**
+ * An automated run still drives a real browser, so it keeps every normal tab —
+ * console, network, interactions, flow, performance, findings — and adds one
+ * more: the textual log of what the automation itself has done, which has no
+ * `LiveEvidence` kind to be filtered by (same reason `FINDINGS` carries none).
+ */
+const AUTOMATED_EVIDENCE_TABS: Array<{
+  value: AutomatedEvidenceTabValue;
+  label: string;
+  icon: typeof Activity;
+  kinds: Array<LiveEvidence["kind"]>;
+}> = [...EVIDENCE_TABS, { value: "ACTIVITY", label: "Activity", icon: UserRound, kinds: [] }];
 
 /**
  * How the Network tab groups Playwright's resource types, in the order the
@@ -13843,7 +13879,24 @@ function planStateStatuses(run: GuidedRunState): Map<string, PlanStateStatus> {
 }
 
 /** The one sentence telling the user what to do right now. */
-function runInstruction(run: GuidedRunState): { title: string; detail: string } {
+function runInstruction(run: GuidedRunState, automatedStatus?: AutomatedRunStatus | null): { title: string; detail: string } {
+  if (run.mode === "AUTOMATED") {
+    if (automatedStatus?.state === "AWAITING_USER" && automatedStatus.awaitingUser) {
+      return {
+        title:
+          automatedStatus.awaitingUser.kind === "CONFIRM_STEP"
+            ? "Approve this step"
+            : automatedStatus.awaitingUser.kind === "MANUAL_STEP"
+              ? "Do a step for Tellann"
+              : "Sign in for Tellann",
+        detail: automatedStatus.awaitingUser.detail,
+      };
+    }
+    return {
+      title: "Tellann is driving this Flow",
+      detail: "Nothing for you to do until it needs you. Watch the activity log for what has happened so far.",
+    };
+  }
   const plan = run.flowPlan;
   const backendOnly = isBackendOnlyRun(run);
   if (run.status === "PAUSED") {
@@ -13909,11 +13962,19 @@ function runInstruction(run: GuidedRunState): { title: string; detail: string } 
  * is going. Rendered inside the run page, and again on its own in the detached
  * panel window, from the same run state either way.
  */
-export function RunFlowPanelBody({ run, now }: { run: GuidedRunState; now: number }) {
+export function RunFlowPanelBody({
+  run,
+  now,
+  automatedStatus,
+}: {
+  run: GuidedRunState;
+  now: number;
+  automatedStatus?: AutomatedRunStatus | null;
+}) {
   const plan = run.flowPlan;
   const coverage = run.coverage;
   const statuses = planStateStatuses(run);
-  const instruction = runInstruction(run);
+  const instruction = runInstruction(run, automatedStatus);
   const rejection = run.boundaryRejection;
   const backendOnly = isBackendOnlyRun(run);
   const backend = run.backend ?? null;
@@ -14035,8 +14096,16 @@ export function RunFlowPanelBody({ run, now }: { run: GuidedRunState; now: numbe
  * the list is scrolled are a view of the run rather than part of it, so this
  * owns them — the page and a detached window each keep their own.
  */
-export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; controls?: ReactNode }) {
-  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue>("FLOW");
+export function RunEvidencePanel({
+  run,
+  controls,
+  automatedStatus,
+}: {
+  run: GuidedRunState;
+  controls?: ReactNode;
+  automatedStatus?: AutomatedRunStatus | null;
+}) {
+  const [tab, setTab] = useState<EvidenceTabValue | BackendEvidenceTabValue | AutomatedEvidenceTabValue>("FLOW");
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
   const [networkType, setNetworkType] = useState<NetworkTypeFilter>("ALL");
@@ -14046,16 +14115,18 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
 
   // Which evidence panes exist depends on what the run captures. A backend
   // run has no browser console and no interactions to list; it has requests,
-  // server errors and data operations.
+  // server errors and data operations. An automated run has everything a
+  // normal run has, plus its own Activity log.
   const backendOnly = isBackendOnlyRun(run);
+  const isAutomated = run.mode === "AUTOMATED";
   // A run with no Flow attached can never report a FLOW event, so the tab
   // would only ever be empty — left out rather than shown dead.
   const evidenceTabs: Array<{
-    value: EvidenceTabValue | BackendEvidenceTabValue;
+    value: EvidenceTabValue | BackendEvidenceTabValue | AutomatedEvidenceTabValue;
     label: string;
     icon: typeof Activity;
     kinds: Array<LiveEvidence["kind"]>;
-  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : EVIDENCE_TABS).filter(
+  }> = (backendOnly ? BACKEND_EVIDENCE_TABS : isAutomated ? AUTOMATED_EVIDENCE_TABS : EVIDENCE_TABS).filter(
     (entry) => entry.value !== "FLOW" || Boolean(run.flowPlan),
   );
   const activeTab = evidenceTabs.find((entry) => entry.value === tab) ?? evidenceTabs[0];
@@ -14086,7 +14157,7 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
   }, [run.evidence, networkTab]);
 
   const visible = useMemo(() => {
-    if (activeTab.value === "FINDINGS") return [];
+    if (activeTab.value === "FINDINGS" || activeTab.value === "ACTIVITY") return [];
     const needle = query.trim().toLowerCase();
     return run.evidence.filter((item) => {
       if (!activeTab.kinds.includes(item.kind)) return false;
@@ -14121,7 +14192,9 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
   const tabCount = (entry: { value: string; kinds: Array<LiveEvidence["kind"]> }) =>
     entry.value === "FINDINGS"
       ? findings.length
-      : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
+      : entry.value === "ACTIVITY"
+        ? automatedStatus?.events.length ?? 0
+        : entry.kinds.reduce((total, kind) => total + (counts[kind] ?? 0), 0);
 
   return (
     <>
@@ -14206,7 +14279,13 @@ export function RunEvidencePanel({ run, controls }: { run: GuidedRunState; contr
         </div>
       ) : null}
       <div className="evidence-list" ref={listRef} onScroll={onListScroll}>
-        {activeTab.value === "FINDINGS" ? (
+        {activeTab.value === "ACTIVITY" ? (
+          automatedStatus?.events.length ? (
+            <AutomatedEventsLog status={automatedStatus} />
+          ) : (
+            <div className="evidence-empty">Tellann's activity log appears here as the run goes.</div>
+          )
+        ) : activeTab.value === "FINDINGS" ? (
           findings.length ? (
             findings.map((finding) => (
               <div
@@ -14300,6 +14379,11 @@ export function LiveRunPage() {
     addDeclaredTransition,
     busy,
   } = useDesktop();
+  // Called unconditionally (hooks can't be conditional) — needed even before
+  // `run` exists, during the window between an automated run starting and its
+  // browser opening, when there is no GuidedRunState to read yet.
+  const automatedStatus = useAutomatedRunStatus();
+  const automatedControl = useAutomatedRunControl();
   const [outdatedSdks, setOutdatedSdks] = useState<Array<{ ecosystem: "npm" | "pypi"; package: string; installed: string; latest: string | null }>>([]);
   const [sdkBannerDismissed, setSdkBannerDismissed] = useState(false);
   const [confirmEnd, setConfirmEnd] = useState(false);
@@ -14466,6 +14550,12 @@ export function LiveRunPage() {
   // A backend run has no browser console and no interactions to describe, so
   // the page reads differently throughout because of it.
   const backendOnly = run ? isBackendOnlyRun(run) : false;
+  const isAutomated = run?.mode === "AUTOMATED";
+  // Both status streams are global, singular and pushed independently, so
+  // before trusting the automation stream for THIS run's chrome, check it
+  // actually names this run rather than one that has since moved on.
+  const automatedStatusForThisRun =
+    isAutomated && automatedStatus && automatedStatus.runId === run.runId ? automatedStatus : null;
 
   const runControl = useCallback(async (action: () => Promise<unknown>) => {
     setControlError(null);
@@ -14565,7 +14655,13 @@ export function LiveRunPage() {
   }, [generateFlowSuggestions, navigate, projectId, reopenDeclaredFlow, run]);
 
   if (!projectId) return <ApplicationRequired />;
-  if (!run)
+  if (!run) {
+    // The window between an automated run starting and its browser opening:
+    // there is a status to show, just no GuidedRunState yet to drive the rest
+    // of this page from.
+    if (automatedStatus && automatedStatus.applicationId === projectId && isAutomatedRunActive(automatedStatus)) {
+      return <AutomatedPreparingView status={automatedStatus} />;
+    }
     return (
       <EmptyState
         icon={<Activity size={36} />}
@@ -14578,6 +14674,7 @@ export function LiveRunPage() {
         }
       />
     );
+  }
 
   const plan = run.flowPlan;
   const coverage = run.coverage;
@@ -14743,7 +14840,7 @@ export function LiveRunPage() {
             <span>{PANEL_TITLES.guide}</span>
             <RunPanelControls panel="guide" onView={setPanelView} onDock={dockPanel} />
           </div>
-          <RunFlowPanelBody run={run} now={now} />
+          <RunFlowPanelBody run={run} now={now} automatedStatus={automatedStatusForThisRun} />
         </section>
       ) : guidePlacement === "minimized" ? (
         <section className="live-flow is-minimized">
@@ -14761,6 +14858,15 @@ export function LiveRunPage() {
           <Status>{run.phase.replaceAll("_", " ")}</Status>
         </div>
         <div className="run-workspace">
+          {automatedStatusForThisRun ? (
+            <AutomatedHandoverCard
+              status={automatedStatusForThisRun}
+              busy={automatedControl.busy || !automatedControl.available}
+              onConfirm={automatedControl.confirm}
+              onCancel={automatedControl.cancel}
+            />
+          ) : null}
+
           {browserStatus === "CLOSED" && runIsLive ? (
             <div className="run-rejection" role="status">
               <TriangleAlert size={15} />
@@ -14867,6 +14973,8 @@ export function LiveRunPage() {
             </>
           ) : null}
 
+          {automatedStatusForThisRun ? <AutomatedRunPhaseFacts status={automatedStatusForThisRun} /> : null}
+
           {preBoundary || backendOnly ? null : (
           <div className="run-facts">
             <article>
@@ -14898,13 +15006,21 @@ export function LiveRunPage() {
             </article>
             <article>
               <small>Interaction mode</small>
-              <strong>{run.mode === "OBSERVATION_ONLY" ? "Read only" : run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}</strong>
+              <strong>
+                {run.mode === "OBSERVATION_ONLY"
+                  ? "Read only"
+                  : run.mode === "AUTOMATED"
+                    ? "Automated"
+                    : run.interactionMode === "INSPECT" ? "Inspect" : "Navigate"}
+              </strong>
               <span>
                 {run.mode === "OBSERVATION_ONLY"
                   ? "Application interaction is blocked; routes, requests, errors, performance, and passive evidence are still recorded."
-                  : run.interactionMode === "INSPECT"
-                  ? "Click any element in the browser window to leave a comment."
-                  : "Controls in the application behave normally."}
+                  : run.mode === "AUTOMATED"
+                    ? "Tellann is driving the application itself. See the phase facts above for what it's doing."
+                    : run.interactionMode === "INSPECT"
+                      ? "Click any element in the browser window to leave a comment."
+                      : "Controls in the application behave normally."}
               </span>
             </article>
           </div>
@@ -15002,6 +15118,7 @@ export function LiveRunPage() {
           <RunEvidencePanel
             run={run}
             controls={<RunPanelControls panel="evidence" onView={setPanelView} onDock={dockPanel} />}
+            automatedStatus={automatedStatusForThisRun}
           />
         </aside>
       ) : evidencePlacement === "minimized" ? (
@@ -15016,6 +15133,8 @@ export function LiveRunPage() {
           <span className="run-mode-status" role="status" aria-live="polite">
             {controlError
                 ? controlError
+                : isAutomated
+                ? "Tellann is driving this run"
                 : browserStatus === "CLOSED" && runIsLive
                 ? "Browser window closed — capture is still running"
                 : run.phase === "IN_FLOW"
@@ -15026,7 +15145,15 @@ export function LiveRunPage() {
           </span>
         </div>
         <div>
-          {run.status === "RUNNING" || run.status === "PAUSED" ? (
+          {isAutomated ? (
+            automatedStatusForThisRun ? (
+              <AutomatedStopControl
+                status={automatedStatusForThisRun}
+                busy={automatedControl.busy || !automatedControl.available}
+                onStop={automatedControl.cancel}
+              />
+            ) : null
+          ) : run.status === "RUNNING" || run.status === "PAUSED" ? (
             <>
               {run.mode !== "OBSERVATION_ONLY" && !backendOnly ? <div className="run-mode-selector" role="group" aria-label="Browser interaction mode">
                 <button
