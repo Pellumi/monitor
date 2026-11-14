@@ -1,5 +1,7 @@
 # Tellann Phase 1-3 Launch Readiness Report
 
+> **Maintenance note (14 November 2026):** This report records the August acceptance snapshot. Current code also includes the web system-administration dashboard and split settings surfaces. Use current code and release verification scripts—not historical “admin dashboard missing” findings—as the launch authority.
+
 **Assessment date:** 11 August 2026  
 **Scope:** Windows desktop, cloud control plane, web companion, billing, settings, Phase 1 guided runs, Phase 2 document intelligence, and Phase 3 JavaScript/TypeScript instrumentation.  
 **Overall status:** Phase 1 and Phase 2 acceptance complete. Phase 3 implementation and service-level acceptance complete. Windows signing remains an approved release exclusion. A final clean-host replay of the packaged managed-browser-to-report leg remains a release-candidate verification gate because the development host became resource-constrained during the final replay.

@@ -11,8 +11,8 @@ import {
   analyzeCodebase, buildFeatureEvidenceBundle, buildInventory, detectApplicationProfile, testNamesForFeature,
 } from '@tellann/project-intelligence';
 import { createArchitectureStore, recordArchitectureProjection } from '@tellann/capabilities';
-import type { CodebaseAnalysis } from '@tellann/desktop-contracts';
 import { createGraphStore } from '@tellann/code-graph';
+import { analysisIdentity, assertCanonicalAnalysis, type CodebaseAnalysis } from '@tellann/code-intelligence-contracts';
 import { explainFeatures } from '@tellann/ai';
 
 const prisma = new PrismaClient();
@@ -166,6 +166,10 @@ async function processOne(): Promise<boolean> {
     if (await cancelled(queued.id)) return true;
 
     const analysis: CodebaseAnalysis = result.analysis;
+    // This is the single analyzer → persistence boundary. Refuse malformed,
+    // dangling, or non-content-addressed output before it reaches Postgres or
+    // Neo4j, so desktop and cloud cannot silently publish different graphs.
+    assertCanonicalAnalysis(analysis);
     // The extracted archive carries no Git metadata, so the branch and revision
     // come from the snapshot the desktop recorded when it uploaded the source.
     analysis.revision = analysis.revision ?? queued.codebaseSnapshot.revision ?? null;
@@ -285,9 +289,9 @@ async function processOne(): Promise<boolean> {
           organizationId: queued.organizationId,
           applicationId: queued.applicationId,
           snapshotId: queued.codebaseSnapshotId,
-          graphVersion: analysis.graphVersion,
+          ...analysisIdentity(analysis),
         };
-        await graph.replace(scope, analysis.entities, analysis.relationships);
+        await graph.replaceAnalysis(scope, analysis);
         await graph.deleteOtherVersions(scope).catch(() => 0);
       } catch (error) {
         graphStatus = 'PARTIAL';

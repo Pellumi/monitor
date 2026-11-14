@@ -176,7 +176,7 @@ function AuthenticatedApp() {
     return (
       <StandaloneWindow>
         <div className="auth-card">
-          <ThemedLogo className="auth-logo" />
+          {/* <ThemedLogo className="auth-logo" /> */}
           <h1>{bridgeAvailable ? 'Sign in to Tellann' : 'Open Tellann in the desktop app'}</h1>
           <p>
             {bridgeAvailable

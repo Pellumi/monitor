@@ -1,5 +1,13 @@
 # Complete Codebase Analysis System
 
+## Canonical engine boundary
+
+`@tellann/project-intelligence` is the single analysis engine on desktop and cloud: it reads a bounded source snapshot and produces the shared `CodebaseAnalysis` entities and relationships from `@tellann/desktop-contracts`. The cloud `code-intelligence-worker` deliberately invokes that same package.
+
+`@tellann/code-graph` is not a second analyzer. It is the tenant-scoped graph persistence/query adapter for analyzer output (replace, project, neighbours, shortest path, and blast radius), backed by Neo4j when configured and an in-memory store for tests/local fallback. It must not parse source or derive entities. Detection logic belongs in `project-intelligence`; storage and traversal behavior belongs in `code-graph`.
+
+The executable boundary is `@tellann/code-intelligence-contracts`. It owns the schema version, canonical graph hashing, identity metadata, and validation used by both the analyzer and graph store. `code-intelligence-worker` must persist through `replaceAnalysis`, never the unchecked node/edge write API. Analyzer `2.3.0` intentionally invalidates older cached graph identities because graph versions now include canonical entities, relationships, evidence, content hash, and analyzer versions. Existing snapshots should be re-analysed rather than relabelled.
+
 ## Summary
 
 Replace the current synchronous regex summary with an asynchronous, versioned Codebase Intelligence Engine. Attaching a workspace will immediately create an immutable source snapshot, upload its sanitized contents, queue a staged analysis, and progressively populate one canonical knowledge graph. The Workspace page will expose hierarchy, dependencies, architecture, functionality, APIs, data, events, external systems, evidence, risks, and change analysis as projections of that graph.

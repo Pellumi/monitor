@@ -2343,12 +2343,14 @@ export function EnvironmentsPage() {
 }
 
 export function ActivityPage() {
+  const { application } = useProject();
   return (
     <GuardedFeaturePage
       title="Application activity"
       description="Workspace scans, runs, reports, and local synchronization activity."
-      phase="Cloud audit expansion is scheduled for enterprise hardening."
-      fallback="QA run and report history are available in their respective sections."
+      phase="Activity history is managed in the web companion"
+      fallback={`Open the cloud activity feed${application?.name ? ` for ${application.name}` : ""}. Local run and report history remains available in the desktop sections.`}
+      webPath="/"
     />
   );
 }
@@ -6311,8 +6313,9 @@ export function IntentDetailPage() {
       <GuardedFeaturePage
         title="Intent versions"
         description="Accepted graph version history."
-        phase="Select an accepted graph from Intent."
-        fallback="Version comparison remains cloud-authoritative."
+        phase="Version comparison is managed in the web companion"
+        fallback="Open Graph Drift to compare accepted, persisted intent versions. Select an intent draft here to continue editing locally."
+        webPath="/graph-drift"
       />
     );
   if (loading) return <LoadingState />;
@@ -17156,6 +17159,7 @@ export function ReportAuxPage({ kind }: { kind: "compare" | "export" }) {
           : "Existing web exports remain the current canonical export path."
       }
       fallback="Open the report in the web companion for the currently supported workflow."
+      webPath="/reports"
     />
   );
 }
@@ -17165,15 +17169,17 @@ export function GuardedFeaturePage({
   description,
   phase,
   fallback,
+  webPath,
 }: {
   title: string;
   description: string;
   phase: string;
   fallback: string;
+  webPath?: string;
 }) {
   return (
     <Page title={title} description={description}>
-      <GuardedFeatureContent phase={phase} fallback={fallback} />
+      <GuardedFeatureContent phase={phase} fallback={fallback} webPath={webPath} />
     </Page>
   );
 }
@@ -17181,10 +17187,19 @@ export function GuardedFeaturePage({
 function GuardedFeatureContent({
   phase,
   fallback,
+  webPath,
 }: {
   phase: string;
   fallback: string;
+  webPath?: string;
 }) {
+  const openWebCompanion = () => {
+    const base = (import.meta.env.VITE_TELLANN_DASHBOARD_URL || "http://localhost:3010").replace(/\/$/, "");
+    const url = `${base}${webPath ?? "/"}`;
+    if (window.tellann?.system?.openExternal) void window.tellann.system.openExternal(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  };
+
   return (
     <section className="guarded-card">
       <ShieldCheck size={32} />
@@ -17192,6 +17207,11 @@ function GuardedFeatureContent({
         <Status>Staged capability</Status>
         <h2>{phase}</h2>
         <p>{fallback}</p>
+        {webPath ? (
+          <button className="button primary" type="button" onClick={openWebCompanion}>
+            Open web companion <ExternalLink size={15} />
+          </button>
+        ) : null}
       </div>
     </section>
   );

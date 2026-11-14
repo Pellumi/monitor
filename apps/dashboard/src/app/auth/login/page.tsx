@@ -287,6 +287,28 @@ export default function LoginPage() {
       }
 
       const { exists, preferredAuthMode, hasPassword } = await res.json();
+
+      // A configured organization domain takes precedence over personal
+      // password/OTP authentication. The auth service owns state validation
+      // and returns the provider authorization URL without exposing its org id.
+      const sso = await fetch('/api-gateway/auth/oidc/identify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: cleanEmail }),
+      }).then((response) => response.ok ? response.json() : { available: false });
+      if (sso.available) {
+        const start = await fetch('/api-gateway/auth/oidc/start', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ email: cleanEmail, redirectPath: from }),
+        });
+        const body = await start.json().catch(() => ({}));
+        if (!start.ok || !body.authorizeUrl) throw new Error(body.message ?? 'Could not start SSO sign-in.');
+        window.location.assign(body.authorizeUrl);
+        return;
+      }
+
       const resolvedPurpose = exists ? 'LOGIN' : 'SIGNUP';
       setPurpose(resolvedPurpose);
 

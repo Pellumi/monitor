@@ -508,6 +508,22 @@ importers:
 
   packages/code-graph:
     dependencies:
+      '@tellann/code-intelligence-contracts':
+        specifier: workspace:*
+        version: link:../code-intelligence-contracts
+      '@tellann/desktop-contracts':
+        specifier: workspace:*
+        version: link:../desktop-contracts
+    devDependencies:
+      '@types/node':
+        specifier: ^20.0.0
+        version: 20.19.43
+      typescript:
+        specifier: ^5.0.0
+        version: 5.9.3
+
+  packages/code-intelligence-contracts:
+    dependencies:
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
@@ -733,6 +749,9 @@ importers:
       '@tellann/automation-engine':
         specifier: workspace:*
         version: link:../automation-engine
+      '@tellann/code-intelligence-contracts':
+        specifier: workspace:*
+        version: link:../code-intelligence-contracts
       '@tellann/desktop-contracts':
         specifier: workspace:*
         version: link:../desktop-contracts
@@ -1118,6 +1137,9 @@ importers:
       '@tellann/code-graph':
         specifier: workspace:*
         version: link:../../packages/code-graph
+      '@tellann/code-intelligence-contracts':
+        specifier: workspace:*
+        version: link:../../packages/code-intelligence-contracts
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -1425,9 +1447,6 @@ importers:
       '@tellann/capabilities':
         specifier: workspace:*
         version: link:../../packages/capabilities
-      '@tellann/code-graph':
-        specifier: workspace:*
-        version: link:../../packages/code-graph
       '@tellann/db':
         specifier: workspace:*
         version: link:../../packages/db

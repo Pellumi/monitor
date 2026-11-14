@@ -29,7 +29,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           <div className="space-y-2">
             <h2 className="text-lg font-bold text-white tracking-tight">Access Denied</h2>
             <p className="text-neutral-400 text-sm leading-relaxed">
-              This area is restricted to system administrators. If you believe this is an error, please contact support or run the bootstrap process.
+              This area is restricted to system administrators. If this deployment designates your email as the bootstrap administrator, sign out and back in to refresh your access; otherwise contact support.
             </p>
           </div>
         </div>
