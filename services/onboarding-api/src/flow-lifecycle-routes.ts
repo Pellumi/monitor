@@ -276,6 +276,12 @@ export function createFlowLifecycleRouter(input: {
     return initialization;
   }
 
+  const RETRIEVAL_STATUSES = ['RESOLVED', 'AMBIGUOUS', 'UNRESOLVED', 'UNSUPPORTED'] as const;
+  function retrievalStatusOf(value: unknown): (typeof RETRIEVAL_STATUSES)[number] | null {
+    const text = String(value ?? '');
+    return (RETRIEVAL_STATUSES as readonly string[]).includes(text) ? (text as (typeof RETRIEVAL_STATUSES)[number]) : null;
+  }
+
   function boundedMappingBundle(value: unknown) {
     if (!value || typeof value !== 'object') throw new Error('INVALID_FLOW_MAPPING_BUNDLE');
     const body = value as Record<string, any>;
@@ -298,6 +304,10 @@ export function createFlowLifecycleRouter(input: {
         files.add(file);
         if (files.size > 5) throw new Error('FLOW_MAPPING_FILE_LIMIT_EXCEEDED');
         if (String(candidate.excerpt ?? '').length > 12_000) throw new Error('FLOW_MAPPING_EXCERPT_TOO_LARGE');
+        // A single declaration line, not a window of source — bounded far
+        // tighter than the excerpt, which is the whole point of sending it
+        // instead: it is small enough to carry regardless of excerpt consent.
+        if (String(candidate.anchorText ?? '').length > 500) throw new Error('FLOW_MAPPING_ANCHOR_TOO_LARGE');
       }
     }
     return { analysis, mappings, retrievalVersion: String(body.retrievalVersion ?? 'flow-mapping/2'), consentMode: String(body.consentMode ?? 'LOCAL_GRAPH_ONLY') };
@@ -349,6 +359,12 @@ export function createFlowLifecycleRouter(input: {
         stateRole: checkpoint.stateRole ?? null,
         fromLabel: transition ? stateNames.get(String(transition.fromStateId)) ?? null : null,
         toLabel: transition ? stateNames.get(String(transition.toStateId)) ?? null : null,
+        // What retrieval already decided about this checkpoint from ranking
+        // alone, before any model was asked. Only 'RESOLVED' is acted on
+        // downstream — it lets a confidently-ranked, structurally-placeable
+        // checkpoint skip the model call entirely instead of defaulting to
+        // AMBIGUOUS the way a bare candidate list otherwise would.
+        retrievalStatus: retrievalStatusOf(item.status),
         candidates: item.candidates.map((candidate: any) => ({
           id: String(candidate.id), entityId: String(candidate.entityId), file: String(candidate.file ?? candidate.path),
           symbol: candidate.symbol == null ? null : String(candidate.symbol),
@@ -364,6 +380,9 @@ export function createFlowLifecycleRouter(input: {
                   (Array.isArray(candidate.evidence) && candidate.evidence.length) ? [] : [`entity:${candidate.entityId ?? candidate.id}`],
                 ),
           rationale: String(candidate.rationale ?? `Ranked ${candidate.name ?? candidate.symbol ?? candidate.path} from codebase entities, graph relationships, and feature evidence.`),
+          // The candidate's own declaration line. Not an AI excerpt, so unlike
+          // `excerpt` it is forwarded regardless of consent mode.
+          anchorText: candidate.anchorText == null ? null : String(candidate.anchorText),
           excerpt: bundle.consentMode.endsWith('APPROVED')
             ? String(candidate.excerpt ?? candidate.evidence?.find((item: any) => item.excerpt)?.excerpt ?? '') : null,
         })),

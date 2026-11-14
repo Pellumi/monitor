@@ -74,6 +74,7 @@ export class DesktopNotificationClient {
   private heartbeat: NodeJS.Timeout | null = null;
   private cursor: string | null = null;
   private running = false;
+  private unreadCount = 0;
 
   constructor(deps: {
     apiUrl: string;
@@ -126,6 +127,12 @@ export class DesktopNotificationClient {
     if (this.organizationId && this.token()) {
       await this.api(`/notification-devices/${this.installationId}`, { method: 'DELETE' }).catch(() => undefined);
     }
+    this.setUnreadCount(0);
+  }
+
+  /** The unread count as of the last fetch/push — for a renderer mounting after the stream already started. */
+  getUnreadCount(): number {
+    return this.unreadCount;
   }
 
   // ── Renderer-facing operations ──────────────────────────────────────────────
@@ -137,20 +144,31 @@ export class DesktopNotificationClient {
   }> {
     const params = new URLSearchParams({ limit: '20', filter: input.filter ?? 'all' });
     if (input.cursor) params.set('cursor', input.cursor);
-    return this.api(`/notifications?${params.toString()}`);
+    const result = await this.api<{ notifications: DesktopNotificationRow[]; unreadCount: number; nextCursor: string | null }>(
+      `/notifications?${params.toString()}`,
+    );
+    // The feed is the authoritative count; a page load/refresh re-syncs
+    // whatever the stream's own increments may have drifted from.
+    this.setUnreadCount(result.unreadCount);
+    return result;
   }
 
-  markRead(id: string) {
-    return this.api(`/notifications/${id}/read`, { method: 'PATCH' });
+  async markRead(id: string) {
+    const result = await this.api(`/notifications/${id}/read`, { method: 'PATCH' });
+    this.setUnreadCount(Math.max(0, this.unreadCount - 1));
+    return result;
   }
-  markAllRead() {
-    return this.api('/notifications/read-all', { method: 'POST' });
+  async markAllRead() {
+    const result = await this.api('/notifications/read-all', { method: 'POST' });
+    this.setUnreadCount(0);
+    return result;
   }
   dismiss(id: string) {
     return this.api(`/notifications/${id}/dismiss`, { method: 'PATCH' });
   }
   async open(id: string): Promise<string> {
     const body = await this.api<{ deepLink: string | null }>(`/notifications/${id}/action`, { method: 'POST' });
+    this.setUnreadCount(Math.max(0, this.unreadCount - 1));
     const target = safePath(body?.deepLink);
     this.focusAndRoute(target);
     return target;
@@ -268,6 +286,15 @@ export class DesktopNotificationClient {
     }
   }
 
+  private setUnreadCount(count: number): void {
+    if (count === this.unreadCount) return;
+    this.unreadCount = count;
+    const window = this.getWindow();
+    if (window && !window.isDestroyed()) {
+      window.webContents.send(IPC.notificationUnreadCount, count);
+    }
+  }
+
   private handleNotification(row: DesktopNotificationRow): void {
     const window = this.getWindow();
     // A read/dismiss synced from another device: just refresh the renderer.
@@ -276,6 +303,7 @@ export class DesktopNotificationClient {
     if (window && !window.isDestroyed()) {
       window.webContents.send(IPC.notificationReceived, row);
     }
+    if (isActionable) this.setUnreadCount(this.unreadCount + 1);
     if (!isActionable) return;
 
     const focused = !!window && !window.isDestroyed() && window.isFocused();

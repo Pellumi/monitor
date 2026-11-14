@@ -253,6 +253,132 @@ kbd {
   align-self: stretch;
   width: 12px;
 }
+
+/* ── Notification bell ────────────────────────────────────────────────── */
+.notification-bell {
+  position: relative;
+}
+.notification-bell-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font: 700 9.5px var(--font-ui);
+  line-height: 15px;
+  text-align: center;
+}
+.notification-bell-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  width: 360px;
+  max-height: 480px;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-0);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.45);
+}
+.notification-bell-dropdown header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.notification-bell-dropdown header h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.notification-bell-dropdown header .button {
+  min-height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+.notification-bell-list {
+  overflow: auto;
+}
+.notification-bell-empty {
+  padding: 24px 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+.notification-bell-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.notification-bell-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.05);
+}
+.notification-bell-row[data-unread="false"] {
+  opacity: 0.68;
+}
+.notification-bell-row-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-top: 5px;
+  border-radius: 999px;
+  background: var(--text-subtle);
+}
+.notification-bell-row[data-tone="danger"] .notification-bell-row-dot {
+  background: var(--danger);
+}
+.notification-bell-row[data-tone="warning"] .notification-bell-row-dot {
+  background: var(--warning);
+}
+.notification-bell-row-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.notification-bell-row-body strong {
+  font-size: 12.5px;
+}
+.notification-bell-row-body span {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notification-bell-row-body small {
+  color: var(--text-subtle);
+  font-size: 10.5px;
+}
+.notification-bell-row-read {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius);
+  color: var(--text-subtle);
+}
+.notification-bell-row-read:hover {
+  background: rgb(var(--overlay-rgb) / 0.08);
+  color: var(--text-strong);
+}
 :root[data-window-focused="false"] :is(.titlebar, .sidebar, .global-statusbar) {
   color: var(--text-subtle);
 }
@@ -1249,6 +1375,217 @@ button:disabled {
   border-left: 1px solid var(--border-subtle);
   background: var(--surface-0);
 }
+
+/* ── Settings area (Profile, Security, Notifications, Billing, …) ────────── */
+/* A second instance of the main app's own .sidebar — same nav/active-state
+   styling, same draggable resize handle — rather than a bespoke nav. */
+.settings-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.settings-shell .sidebar {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border-subtle);
+  /* No overflow here, deliberately: the resize handle below pokes out past
+     the right edge (right: -4px), same as the main sidebar it's modeled on
+     (.routed-shell .sidebar sets no overflow either) — clipping it here was
+     what made the handle unreachable/unresponsive. */
+}
+.settings-sidebar nav + nav {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgb(var(--overlay-rgb) / 0.06);
+}
+.settings-content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-0);
+}
+.settings-org-switcher {
+  min-width: 200px;
+}
+.settings-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.settings-toggle-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+  margin-top: 10px;
+}
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12.5px;
+}
+.endpoint-latency-row {
+  display: grid;
+  grid-template-columns: 36px 1fr 56px;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.endpoint-latency-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgb(var(--overlay-rgb) / 0.08);
+}
+.endpoint-latency-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--success);
+}
+.endpoint-latency-fill[data-tone="warning"] {
+  background: var(--warning);
+}
+.endpoint-latency-fill[data-tone="danger"] {
+  background: var(--danger);
+}
+.endpoint-latency-value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.billing-plan-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+.billing-plan-price {
+  margin: 8px 0 14px;
+  font: 600 18px var(--font-ui);
+}
+.backup-codes-block {
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text);
+  font: 13px var(--font-mono);
+  line-height: 1.8;
+  white-space: pre;
+}
+.session-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 10px;
+  max-height: 360px;
+  overflow: auto;
+}
+.session-timeline-row {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+}
+.session-timeline-row:hover {
+  background: rgb(var(--overlay-rgb) / 0.05);
+}
+.session-timeline-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--text-subtle);
+}
+.session-timeline-row[data-tone="danger"] .session-timeline-dot {
+  background: var(--danger);
+}
+.session-timeline-row[data-tone="progress"] .session-timeline-dot {
+  background: var(--accent);
+}
+.replay-window {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--surface-0);
+  color: var(--text);
+}
+.replay-window-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  font-size: 12px;
+}
+.replay-window-stage {
+  flex: 1;
+  overflow: auto;
+  background: #111;
+}
+.replay-window-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle);
+}
+/* Small additions to the pre-existing (previously unused) profile-popover
+   styling in styles.css, for the profile menu's trailing accelerator hint
+   and the chevron on its summary row. */
+.profile-identity {
+  flex: 1;
+  min-width: 0;
+}
+.profile-menu-items button kbd {
+  margin-left: auto;
+}
+.profile-summary svg {
+  flex: 0 0 auto;
+}
+.reconciliation-flow-card {
+  display: flex;
+  width: 100%;
+  margin-bottom: 8px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.reconciliation-flow-card[data-selected="true"] {
+  border-color: var(--accent);
+  background: rgb(var(--overlay-rgb) / 0.06);
+}
+.coverage-trend-chart {
+  width: 100%;
+  height: auto;
+  margin-top: 10px;
+}
+.coverage-trend-grid {
+  stroke: var(--border-subtle);
+  stroke-width: 1;
+}
+.coverage-trend-label {
+  fill: var(--text-subtle);
+  font-size: 9px;
+}
+.settings-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border-subtle);
+}
+
 /* A list pane with a pager footer: the row list scrolls, the pager stays put. */
 .list-pane-paginated {
   display: flex;
@@ -2019,6 +2356,16 @@ button:disabled {
 }
 .infobar[data-tone="danger"] > svg {
   color: var(--danger);
+}
+/* Progress that is still moving, not stuck — a batch or two not finishing is
+   routine while most of the work already landed, and showing it the same way
+   as a dead-end discourages someone from reading the unresolved count at all. */
+.infobar[data-tone="info"] {
+  border-color: var(--border-subtle);
+  background: rgb(var(--overlay-rgb) / 0.04);
+}
+.infobar[data-tone="info"] > svg {
+  color: var(--text-muted);
 }
 .global-error .error-actions {
   flex: none;
@@ -3237,6 +3584,13 @@ button.statusbar-item:disabled {
 .automated-events li[data-tone="success"] span { color: var(--success); }
 .automated-events li[data-tone="problem"] span { color: var(--danger); }
 .automated-events li[data-tone="notice"] span { color: var(--caution); }
+.automated-skeleton-list {
+  display: grid;
+  gap: 8px;
+}
+.automated-skeleton-list .skeleton-line:nth-child(3n+1) { width: 92%; }
+.automated-skeleton-list .skeleton-line:nth-child(3n+2) { width: 68%; }
+.automated-skeleton-list .skeleton-line:nth-child(3n) { width: 80%; }
 .automated-setup .inline-actions,
 .automated-manager-body .inline-actions,
 .automated-notice .inline-actions,

@@ -27,6 +27,10 @@ const UPSTREAM = {
   BILLING_API:       process.env.BILLING_API_URL || `http://localhost:${Services.BILLING_API}`,
   USAGE_TRACKER:     process.env.USAGE_TRACKER_URL || `http://localhost:${Services.USAGE_TRACKER}`,
   AUTH_API:          process.env.AUTH_API_URL || `http://localhost:${Services.AUTH_API}`,
+  // Not in the shared Services map — background-workers exposes its HTTP
+  // surface (/health, /metrics, /admin/jobs, /admin/queues/status) on its own
+  // "metrics port", not a conventional service port.
+  BACKGROUND_WORKERS: process.env.BACKGROUND_WORKERS_URL || 'http://localhost:3022',
 };
 
 const UPSTREAM_PROBE_TIMEOUT_MS = 3000;
@@ -876,6 +880,7 @@ async function main() {
   const forwardToFdrs = forwardToUpstream(UPSTREAM.FDRS_API);
   const forwardToReportEngine = forwardToUpstream(UPSTREAM.REPORT_ENGINE);
   const forwardToOnboarding = forwardToUpstream(UPSTREAM.ONBOARDING_API);
+  const forwardToBackgroundWorkers = forwardToUpstream(UPSTREAM.BACKGROUND_WORKERS);
 
   // Public contact form on the marketing site. Unauthenticated by design;
   // onboarding-api does its own validation and rate limiting.
@@ -1023,39 +1028,47 @@ async function main() {
 
   // Admin: forward to onboarding-api which proxies member management
   fastify.get('/admin/ai-usage', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.get('/admin/ai-usage/daily', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.post('/admin/ai-usage/backfill', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.get('/admin/audit-logs', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.get('/admin/rulesets', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.post('/admin/rulesets/:id/promote', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.get('/admin/rule-candidates', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.post('/admin/rule-candidates/:id/approve', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
   });
 
   fastify.post('/admin/rule-candidates/:id/reject', { preHandler: requireSystemAdmin }, async (request, reply) => {
-    return forwardToOnboarding({ ...request, url: request.url } as any, reply);
+    return forwardToOnboarding(request, reply);
+  });
+
+  // Live per-queue job counts (waiting/active/completed/failed/delayed/paused).
+  // background-workers' own HTTP port has no auth of its own — this gateway
+  // route is what puts verifySystemAdmin in front of it, the same as every
+  // other /admin/* route above.
+  fastify.get('/admin/queues/status', { preHandler: requireSystemAdmin }, async (request, reply) => {
+    return forwardToBackgroundWorkers(request, reply);
   });
 
   // ─────────────────────────────────────────────────────────────

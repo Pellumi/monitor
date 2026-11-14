@@ -96,9 +96,18 @@ function base64UrlSha256(text: string): string {
   return crypto.createHash('sha256').update(text).digest('base64url');
 }
 
-function issueDesktopAccessToken(user: { id: string; email: string }, deviceSessionId: string) {
+async function issueDesktopAccessToken(user: { id: string; email: string }, deviceSessionId: string) {
+  // Keeps desktop-issued tokens carrying the same isSystemAdmin claim the web
+  // session path signs (see /auth/login, /auth/refresh, /auth/me) — without
+  // this, a desktop-issued token can never pass onboarding-api's
+  // verifySystemAdmin check no matter what the UI gates on.
+  await ensureConfiguredSystemAdmin(user);
+  const adminRecord = await prisma.systemAdmin.findFirst({
+    where: { userId: user.id, revokedAt: null },
+    select: { id: true },
+  });
   return jwt.sign(
-    { sub: user.id, email: user.email, deviceSessionId, client: 'desktop' },
+    { sub: user.id, email: user.email, deviceSessionId, client: 'desktop', isSystemAdmin: adminRecord !== null },
     JWT_SECRET,
     { expiresIn: '15m' },
   );
@@ -482,7 +491,7 @@ app.post('/auth/desktop/token', async (req: Request, res: Response) => {
     });
   });
   res.json({
-    accessToken: issueDesktopAccessToken(user, device.id),
+    accessToken: await issueDesktopAccessToken(user, device.id),
     refreshToken: rawRefreshToken,
     expiresIn: 15 * 60,
     deviceSessionId: device.id,
@@ -534,7 +543,7 @@ app.post('/auth/desktop/refresh', async (req: Request, res: Response) => {
     },
   });
   res.json({
-    accessToken: issueDesktopAccessToken(session.user, session.id),
+    accessToken: await issueDesktopAccessToken(session.user, session.id),
     refreshToken: nextRefreshToken,
     expiresIn: 15 * 60,
   });

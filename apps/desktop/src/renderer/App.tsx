@@ -34,6 +34,22 @@ import {
   WorkspacePage,
 } from './pages';
 import { useAutomatedRunStatus } from './automated-run';
+import { SettingsLayout } from './pages/settings/SettingsLayout';
+import { NotificationSettingsPage } from './pages/settings/NotificationSettingsPage';
+import { ProfilePage } from './pages/settings/ProfilePage';
+import { MembersPage } from './pages/settings/MembersPage';
+import { AuditLogsPage } from './pages/settings/AuditLogsPage';
+import { GraphDriftPage } from './pages/analytics/GraphDriftPage';
+import { ReconciliationPage } from './pages/analytics/ReconciliationPage';
+import { WorkflowsPage } from './pages/analytics/WorkflowsPage';
+import { MissingStatesFlowsPage } from './pages/analytics/MissingStatesFlowsPage';
+import { EndpointAnalysisPage } from './pages/analytics/EndpointAnalysisPage';
+import { ReplayWindow } from './pages/analytics/ReplayWindow';
+import { SessionsPage } from './pages/analytics/SessionsPage';
+import { SessionDetailPage } from './pages/analytics/SessionDetailPage';
+import { SecurityPage } from './pages/settings/SecurityPage';
+import { BillingPage } from './pages/settings/BillingPage';
+import { AdminPage } from './pages/settings/admin/AdminPage';
 
 /** Standalone window content (sign-in, recovery, splash) with its own drag strip. */
 function StandaloneWindow({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -271,10 +287,29 @@ function AuthenticatedApp() {
             <Route key={kind} path={`applications/:projectId/qa-runs/:runId/${kind}`} element={<RunSubPage kind={kind} />} />
           ))}
 
+          <Route path="applications/:projectId/graph-drift" element={<GraphDriftPage />} />
+          <Route path="applications/:projectId/reconciliation" element={<ReconciliationPage />} />
+          <Route path="applications/:projectId/workflows" element={<WorkflowsPage />} />
+          <Route path="applications/:projectId/missing-flows" element={<MissingStatesFlowsPage />} />
+          <Route path="applications/:projectId/endpoints" element={<EndpointAnalysisPage />} />
+          <Route path="applications/:projectId/sessions" element={<SessionsPage />} />
+          <Route path="applications/:projectId/sessions/:sessionId" element={<SessionDetailPage />} />
+
           <Route path="applications/:projectId/reports" element={<ReportsPage />} />
           <Route path="applications/:projectId/reports/compare" element={<ReportAuxPage kind="compare" />} />
           <Route path="applications/:projectId/reports/:reportId" element={<ReportDetailPage />} />
           <Route path="applications/:projectId/reports/:reportId/export" element={<ReportAuxPage kind="export" />} />
+
+          <Route path="settings" element={<SettingsLayout />}>
+            <Route index element={<ProfilePage />} />
+            <Route path="profile" element={<ProfilePage />} />
+            <Route path="security" element={<SecurityPage />} />
+            <Route path="notifications" element={<NotificationSettingsPage />} />
+            <Route path="members" element={<MembersPage />} />
+            <Route path="billing" element={<BillingPage />} />
+            <Route path="audit-logs" element={<AuditLogsPage />} />
+            <Route path="admin" element={<AdminPage />} />
+          </Route>
 
           <Route path="intent" element={<RouteResolver section="intent" />} />
           <Route path="instrumentation" element={<RouteResolver section="instrumentation" />} />
@@ -344,6 +379,16 @@ export function App() {
   // query, so the window carries that panel alone — no shell, no routes.
   const view = new URLSearchParams(window.location.search).get('view');
   const detached = view === 'run-guide' ? 'guide' : view === 'run-evidence' ? 'evidence' : null;
+  // The Session Replay window has no Tellann bridge at all (see
+  // preload/replay-preload.ts) — it must never mount DesktopProvider, which
+  // assumes window.tellann exists.
+  if (view === 'session-replay') {
+    return (
+      <RendererErrorBoundary>
+        <ReplayWindow sessionId={new URLSearchParams(window.location.search).get('sessionId') ?? ''} />
+      </RendererErrorBoundary>
+    );
+  }
   return (
     <RendererErrorBoundary>
       <DesktopProvider>

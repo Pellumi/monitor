@@ -41,6 +41,16 @@ type Excerpt = {
   endLine: number | null;
   content: string;
   redactions: number;
+  /**
+   * The literal source line at the candidate's own declaration. Unlike
+   * `content`, this is not an AI excerpt: it is the same declaration line
+   * already implied by the candidate's file/symbol/startLine, so it travels
+   * with every candidate regardless of excerpt-sharing consent. It is what
+   * lets a checkpoint whose placement needs no further reading of the body
+   * (a component mount, a function/handler entry) be placed from static
+   * analysis alone.
+   */
+  anchorText: string | null;
 };
 
 type LoadedAnalysis = { analysis: CodebaseAnalysis; index: RetrievalIndex };
@@ -71,6 +81,12 @@ function extractExcerpts(
     for (const candidate of mapping.candidates ?? []) {
       if (!candidate.path || !candidate.id) continue;
       const lines = linesOf(candidate.path);
+      // The candidate's own declaration line, when the file still has one at
+      // that line. Computed regardless of excerpt-sharing consent — it is not
+      // source sent to a model, just the literal text behind the
+      // file/symbol/startLine the candidate already carries.
+      const anchorLine = lines && candidate.startLine ? lines[candidate.startLine - 1]?.trim() ?? null : null;
+      const anchorText = anchorLine ? redactSecrets(anchorLine).content : null;
       let raw: string | null;
       if (lines) {
         // A window around the anchor rather than the declaration's full body.
@@ -86,12 +102,12 @@ function extractExcerpts(
         // The file moved since analysis; the graph still holds what it captured.
         raw = candidate.evidence?.find((item) => item.excerpt)?.excerpt ?? null;
       }
-      if (!raw?.trim()) continue;
-      const redacted = redactSecrets(raw.slice(0, MAX_CHARS));
+      if (!raw?.trim() && !anchorText) continue;
+      const redacted = raw?.trim() ? redactSecrets(raw.slice(0, MAX_CHARS)) : { content: '', redactions: 0 };
       excerpts.push({
         candidateId: String(candidate.id), path: String(candidate.path),
         startLine: candidate.startLine ?? null, endLine: candidate.endLine ?? null,
-        content: redacted.content, redactions: redacted.redactions,
+        content: redacted.content, redactions: redacted.redactions, anchorText,
       });
     }
   }

@@ -40,6 +40,7 @@ import type {
   InstrumentationPlanFilters,
   InstrumentationValidationResult,
   QAInteractionMode,
+  MemberRole,
 } from '@tellann/desktop-contracts';
 import type { GuidedRunState } from '@tellann/browser-observer';
 
@@ -90,6 +91,12 @@ type DesktopContextValue = {
   session: DesktopSession | null;
   /** The signed-in user's avatar as a `data:` URI, or null to fall back to initials. */
   avatarDataUri: string | null;
+  /** Re-fetches the avatar — call after an upload/change/delete in Settings. */
+  refreshAvatar(): void;
+  /** The signed-in member's role per organisation, populated as Settings pages fetch membership lists. */
+  organizationRoles: Record<string, MemberRole>;
+  /** Fetches an organisation's member list and records the signed-in member's own role from it. */
+  refreshMembers(organizationId: string): Promise<import('@tellann/desktop-contracts').OrganizationMembership[]>;
   applications: DesktopApplication[];
   /** Organisations the member belongs to — the owner of any application they create. */
   organizations: DesktopOrganization[];
@@ -346,6 +353,17 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     return () => { cancelled = true; };
   }, []);
 
+  const [avatarRefreshNonce, setAvatarRefreshNonce] = useState(0);
+  const refreshAvatar = useCallback(() => setAvatarRefreshNonce((n) => n + 1), []);
+
+  const [organizationRoles, setOrganizationRoles] = useState<Record<string, MemberRole>>({});
+  const refreshMembers = useCallback(async (organizationId: string) => {
+    const members = await window.tellann!.org.members(organizationId);
+    const mine = members.find((member) => member.userId === session?.user?.id);
+    if (mine) setOrganizationRoles((current) => ({ ...current, [organizationId]: mine.role }));
+    return members;
+  }, [session?.user?.id]);
+
   useEffect(() => {
     const userId = session?.user?.id;
     if (!window.tellann || !userId) {
@@ -358,7 +376,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
       .then((uri) => { if (!cancelled) setAvatarDataUri(uri); })
       .catch(() => { if (!cancelled) setAvatarDataUri(null); });
     return () => { cancelled = true; };
-  }, [session?.user?.id]);
+  }, [session?.user?.id, avatarRefreshNonce]);
 
   useEffect(() => {
     if (!window.tellann?.projects?.onAppUpdated) return;
@@ -738,6 +756,9 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     cloudAvailable,
     session,
     avatarDataUri,
+    refreshAvatar,
+    organizationRoles,
+    refreshMembers,
     applications,
     organizations,
     workspaces,
@@ -867,7 +888,7 @@ export function DesktopProvider({ children }: { children: ReactNode }) {
     activeRun, applications, attachWorkspace, authPending, bridgeAvailable, busy, cancelSignIn, cloudAvailable, endRun, error, loading,
     pauseRun, resumeRun, setRunInteractionMode, focusRunBrowser, reopenRunBrowser, retryRunSynchronization, revealProtectedValue, perform, refreshApplications, refreshRuns, searchRuns, renameRun, archiveRun, restoreRun, deleteRun, reopenSignIn, runs, session, signIn, signOut, startRun, workspaces, cloneWorkspace,
     branchCompliance, refreshBranchCompliance, setBranchAgentCheckout, grantQaBranchCheckout, switchToQaBranch, restoreWorkspaceBranch,
-    avatarDataUri, organizations, refreshOrganizations, createApplication, repositoryMismatch,
+    avatarDataUri, refreshAvatar, organizationRoles, refreshMembers, organizations, refreshOrganizations, createApplication, repositoryMismatch,
   ]);
 
   return <DesktopContext.Provider value={value}>{children}</DesktopContext.Provider>;
