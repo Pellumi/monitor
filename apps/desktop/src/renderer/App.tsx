@@ -33,6 +33,7 @@ import {
   SourcesPage,
   WorkspacePage,
 } from './pages';
+import { useAutomatedRunStatus } from './automated-run';
 
 /** Standalone window content (sign-in, recovery, splash) with its own drag strip. */
 function StandaloneWindow({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -58,6 +59,13 @@ const DETACHED_PANEL_TITLES = { guide: 'Run guide', evidence: 'Live evidence' } 
 function DetachedRunPanel({ panel }: { panel: 'guide' | 'evidence' }) {
   const { activeRun, loading } = useDesktop();
   const [now, setNow] = useState(() => Date.now());
+  // Shares `RunFlowPanelBody`/`RunEvidencePanel` with the page, so it needs the
+  // same automation status stream those components now accept.
+  const automatedStatus = useAutomatedRunStatus();
+  const automatedStatusForThisRun =
+    activeRun?.mode === 'AUTOMATED' && automatedStatus && automatedStatus.runId === activeRun.runId
+      ? automatedStatus
+      : null;
   // Only the guide counts elapsed time; the evidence log dates its own rows.
   useEffect(() => {
     if (panel !== 'guide') return;
@@ -81,11 +89,11 @@ function DetachedRunPanel({ panel }: { panel: 'guide' | 'evidence' }) {
         </div>
       ) : panel === 'evidence' ? (
         <div className="live-evidence run-panel-window-evidence">
-          <RunEvidencePanel run={activeRun} />
+          <RunEvidencePanel run={activeRun} automatedStatus={automatedStatusForThisRun} />
         </div>
       ) : (
         <div className="run-panel-window-body">
-          <RunFlowPanelBody run={activeRun} now={now} />
+          <RunFlowPanelBody run={activeRun} now={now} automatedStatus={automatedStatusForThisRun} />
         </div>
       )}
     </div>

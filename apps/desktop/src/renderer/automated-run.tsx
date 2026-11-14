@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, ChevronDown, Eye, EyeOff, Info, Loader2, Play, ShieldCheck, Square, Trash2, UserRound } from "lucide-react";
+import { AlertTriangle, ChevronDown, Eye, EyeOff, Info, Loader2, ShieldCheck, Trash2, UserRound } from "lucide-react";
 import { isSecretDataKey, parseDotenv } from "@tellann/flow-layout";
-import { describeExecutionPhase } from "./automation-shared";
 import type {
   AutomatedRunStatus,
   AutomationOptions,
@@ -814,85 +813,3 @@ function LoginManager({ applicationId, options, reload, declaredLogin }: { appli
   );
 }
 
-// -- watching a run ---------------------------------------------------------------------------------------------------------------
-
-export function AutomatedRunLive({ status }: { status: AutomatedRunStatus }) {
-  const [busy, setBusy] = useState(false);
-  const listEnd = useRef<HTMLLIElement>(null);
-  useEffect(() => { listEnd.current?.scrollIntoView?.({ block: "nearest" }); }, [status.events.length]);
-  const api = bridge();
-  const finished = status.state === "FINISHED";
-  const act = async (action: () => Promise<unknown> | undefined) => {
-    setBusy(true);
-    try { await action(); } catch { /* the status stream shows what happened */ } finally { setBusy(false); }
-  };
-  return (
-    <div className="automated-live">
-      <section className="automated-live-head" aria-live="polite">
-        {finished ? (
-          status.outcome?.result === "COMPLETED" ? <CheckCircle2 className="automated-ok" /> : <Info />
-        ) : status.state === "AWAITING_USER" ? <UserRound /> : <Loader2 className="spin" />}
-        <div>
-          <strong>{finished ? status.outcome?.title ?? "Finished" : status.phase ? describeExecutionPhase(status.phase) : "Working"}</strong>
-          <small>
-            {status.currentStateKey ? `In ${status.currentStateKey} · ` : ""}{status.steps} step{status.steps === 1 ? "" : "s"} · aiming for {status.targetStateKey}
-          </small>
-        </div>
-        {!finished ? (
-          <button className="button" type="button" disabled={busy || !api} onClick={() => void act(() => api?.cancel())}><Square size={14} /> Stop the run</button>
-        ) : null}
-      </section>
-
-      {status.state === "AWAITING_USER" && status.awaitingUser ? (
-        <section className="automated-handover" role="alert">
-          <UserRound size={18} />
-          <div>
-            {status.awaitingUser.kind === "CONFIRM_STEP" ? (
-              <>
-                <strong>Approve this step</strong>
-                <p>{status.awaitingUser.detail}</p>
-                <p className="field-hint">The Flow marks this step as one a person approves first. Declining stops the run here; nothing further is done to your application.</p>
-                <div className="automated-inline">
-                  <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> Approve and continue</button>
-                  <button className="button" type="button" disabled={busy || !api} onClick={() => void act(() => api?.cancel())}><Square size={14} /> Decline and stop</button>
-                </div>
-              </>
-            ) : status.awaitingUser.kind === "MANUAL_STEP" ? (
-              <>
-                <strong>Tellann needs you to do a step</strong>
-                <p>{status.awaitingUser.detail}</p>
-                <p className="field-hint">The browser Tellann opened is in front of you. Nothing you type there is recorded. When you have done it, come back here and Tellann will check it worked and carry on.</p>
-                <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> I have done it</button>
-              </>
-            ) : (
-              <>
-                <strong>Tellann needs you to sign in</strong>
-                <p>{status.awaitingUser.detail}</p>
-                <p className="field-hint">The browser Tellann opened is in front of you. Nothing you type there is recorded, and Tellann never tries to get past a CAPTCHA. When you are in, come back here.</p>
-                <button className="button primary" type="button" disabled={busy || !api} onClick={() => void act(() => api?.confirmSignedIn())}><Play size={14} /> I have signed in</button>
-              </>
-            )}
-          </div>
-        </section>
-      ) : null}
-
-      {finished && status.outcome ? (
-        <section className="automated-outcome" data-tone={status.outcome.tone}>
-          <p>{status.outcome.message}</p>
-          {status.outcome.nextStep ? <p className="field-hint">{status.outcome.nextStep}</p> : null}
-          {status.outcome.result !== "FAILED" ? <Link className="button primary" to={`/applications/${status.applicationId}/qa-runs/${status.runId}`}>Open the run</Link> : null}
-        </section>
-      ) : null}
-
-      <ol className="automated-events" aria-label="What the run has done">
-        {status.events.map((event, index) => (
-          <li key={`${event.at}:${index}`} data-tone={event.tone}>
-            <time>{new Date(event.at).toLocaleTimeString()}</time>
-            <span>{event.text}</span>
-          </li>
-        ))}
-        <li ref={listEnd} aria-hidden />
-      </ol>
-    </div>
-  );
-}
