@@ -4,6 +4,18 @@
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const PDFDocument = require('pdfkit') as new (opts?: { size?: string; margin?: number }) => any;
 
+import * as path from 'path';
+import { TELLANN_LOGO_PNG_BASE64 } from './logo';
+
+const LOGO_BUFFER = Buffer.from(TELLANN_LOGO_PNG_BASE64, 'base64');
+const LOGO_ASPECT_RATIO = 540 / 1080; // source PNG is 1080×540
+
+// PDFKit's built-in Helvetica only covers WinAnsi, which has no glyph for ₦
+// (or most other non-Latin-1 currency symbols), so the amount-paid heading
+// needs a Unicode font instead. PDFKit subsets embedded fonts down to the
+// glyphs actually used, so the 2MB source file costs nothing per PDF.
+const UNICODE_FONT_PATH = path.join(__dirname, 'assets', 'NotoSans-Regular.ttf');
+
 /**
  * The billing document. One template renders both faces of an invoice record:
  * unpaid it is a request for payment, paid it is a receipt. Amounts arrive
@@ -25,6 +37,10 @@ export interface InvoiceDocumentData {
   taxId: string | null;
   organizationName: string;
 
+  billedFromName: string;
+  billedFromAddress: string;
+  billedFromEmail: string;
+
   planName: string;
   billingPeriodStart: string;
   billingPeriodEnd: string;
@@ -36,6 +52,7 @@ export interface InvoiceDocumentData {
   taxJurisdiction: string | null;
   tax: string;
   total: string;
+  totalSymbol: string;
 
   provider: string;
   providerReference: string;
@@ -62,45 +79,74 @@ export async function generateInvoicePdf(data: InvoiceDocumentData): Promise<Buf
     const isReceipt = data.kind === 'RECEIPT';
 
     // ─── Header ──────────────────────────────────────────────
-    doc
-      .fontSize(24).font('Helvetica-Bold').fillColor(INK)
-      .text('Tellann', LEFT, 50)
-      .fontSize(10).font('Helvetica').fillColor(MUTED)
-      .text('Behavioral Quality Intelligence Platform', LEFT, 78);
+    const logoWidth = 130;
+    doc.image(LOGO_BUFFER, LEFT, 50, { width: logoWidth, height: logoWidth * LOGO_ASPECT_RATIO });
 
     doc
       .fontSize(18).font('Helvetica-Bold').fillColor(INK)
       .text(isReceipt ? 'Payment Receipt' : 'Invoice', 0, 50, { align: 'right' })
       .fontSize(10).font('Helvetica').fillColor(MUTED)
-      .text(`No. ${data.invoiceNumber}`, 0, 74, { align: 'right' })
-      .text(`Issued ${formatDate(data.issuedAt)}`, 0, 88, { align: 'right' });
+      .text(`Receipt No: ${data.invoiceNumber}`, 0, 74, { align: 'right' })
+      .text(`Date Issued: ${formatDate(data.issuedAt)}`, 0, 88, { align: 'right' });
 
     if (!isReceipt) {
       doc.fillColor('#B45309').font('Helvetica-Bold')
         .text(labelForStatus(data.status), 0, 102, { align: 'right' });
     }
 
-    doc.moveTo(LEFT, 122).lineTo(RIGHT, 122).strokeColor(RULE).lineWidth(1).stroke();
+    doc.moveTo(LEFT, 132).lineTo(RIGHT, 132).strokeColor(RULE).lineWidth(1).stroke();
 
-    // ─── Billed to ───────────────────────────────────────────
-    let y = 140;
+    // ─── Billed to / Billed from ────────────────────────────
+    const columnTop = 150;
+    const fromX = 320;
+    const toWidth = fromX - LEFT - 20;
+    const fromWidth = RIGHT - fromX;
+
+    let y = columnTop;
     doc
       .fontSize(9).font('Helvetica-Bold').fillColor(MUTED)
       .text('BILLED TO', LEFT, y);
     y += 14;
-    doc.fontSize(12).font('Helvetica-Bold').fillColor(INK).text(data.billedToName, LEFT, y);
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(INK).text(data.billedToName, LEFT, y, { width: toWidth });
     y += 16;
     doc.fontSize(10).font('Helvetica').fillColor('#374151');
-    if (data.billedToEmail) { doc.text(data.billedToEmail, LEFT, y); y += 13; }
-    for (const line of data.billedToAddress) { doc.text(line, LEFT, y); y += 13; }
-    if (data.taxId) { doc.text(`Tax ID: ${data.taxId}`, LEFT, y); y += 13; }
+    if (data.billedToEmail) { doc.text(data.billedToEmail, LEFT, y, { width: toWidth }); y += 13; }
+    for (const line of data.billedToAddress) { doc.text(line, LEFT, y, { width: toWidth }); y += 13; }
+    if (data.taxId) { doc.text(`Tax ID: ${data.taxId}`, LEFT, y, { width: toWidth }); y += 13; }
     if (data.organizationName && data.organizationName !== data.billedToName) {
-      doc.fillColor(MUTED).text(`For ${data.organizationName}`, LEFT, y);
+      doc.fillColor(MUTED).text(`For ${data.organizationName}`, LEFT, y, { width: toWidth });
       y += 13;
     }
 
+    let fy = columnTop;
+    doc
+      .fontSize(9).font('Helvetica-Bold').fillColor(MUTED)
+      .text('BILLED FROM', fromX, fy, { width: fromWidth });
+    fy += 14;
+    doc.fontSize(12).font('Helvetica-Bold').fillColor(INK).text(data.billedFromName, fromX, fy, { width: fromWidth });
+    fy += 16;
+    doc.fontSize(10).font('Helvetica').fillColor('#374151');
+    const fromAddressHeight = doc.heightOfString(data.billedFromAddress, { width: fromWidth });
+    doc.text(data.billedFromAddress, fromX, fy, { width: fromWidth });
+    fy += fromAddressHeight + 3;
+    doc
+      .fillColor('#2563EB')
+      .text(data.billedFromEmail, fromX, fy, { width: fromWidth, link: `mailto:${data.billedFromEmail}`, underline: true });
+    fy += 13;
+
+    let sectionBottom = Math.max(y, fy) + 22;
+
+    // ─── Amount paid ─────────────────────────────────────────
+    doc
+      .fontSize(22).font(UNICODE_FONT_PATH).fillColor(INK)
+      .text(
+        `${data.totalSymbol} ${isReceipt ? 'paid on' : 'due on'} ${formatLongDate(data.paidAt ?? data.issuedAt)}`,
+        LEFT, sectionBottom, { width: RIGHT - LEFT },
+      );
+    sectionBottom += 36;
+
     // ─── Line items ──────────────────────────────────────────
-    const tableTop = Math.max(y + 22, 250);
+    const tableTop = Math.max(sectionBottom, 250);
     const amountX = 400;
 
     doc
@@ -197,6 +243,14 @@ function titleCase(value: string): string {
 function formatDate(iso: string): string {
   try {
     return new Date(iso).toLocaleDateString('en-GB', { day: '2-digit', month: 'long', year: 'numeric' });
+  } catch {
+    return iso;
+  }
+}
+
+function formatLongDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
   } catch {
     return iso;
   }

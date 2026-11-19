@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('fs').cpSync('src/assets','dist/assets',{recursive:true})\"",
     "test": "node --test dist/billing-policy.test.js dist/providers/paystack.test.js dist/providers/flutterwave.test.js",
     "billing:verify-local": "node scripts/verify-local-billing.mjs",
     "dev": "ts-node-dev --respawn --transpile-only src/index.ts",

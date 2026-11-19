@@ -314,7 +314,9 @@ async function deliverInvoiceEmail(invoiceId: string): Promise<void> {
 }
 
 function invoiceNumber(): string {
-  return `TELLANN-${Date.now()}-${Math.random().toString(16).slice(2, 8).toUpperCase()}`;
+  const random = Math.random().toString(36).slice(2, 10).toUpperCase().padEnd(8, '0');
+  const suffix = Date.now().toString().slice(-4);
+  return `${random}-${suffix}`;
 }
 
 function checkoutReturnUrl(value: unknown, invoiceId: string): string | undefined {

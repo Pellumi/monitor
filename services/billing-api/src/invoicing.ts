@@ -22,6 +22,34 @@ export function formatMoney(minorUnits: number, currency: string): string {
   }).format(minorUnits / MAJOR_UNITS);
 }
 
+/** Same as {@link formatMoney} but with the currency's symbol (₦, $, …) instead of its ISO code. */
+export function formatMoneyWithSymbol(minorUnits: number, currency: string): string {
+  return new Intl.NumberFormat('en', {
+    style: 'currency',
+    currency,
+    currencyDisplay: 'narrowSymbol',
+    maximumFractionDigits: 2,
+  }).format(minorUnits / MAJOR_UNITS);
+}
+
+function countryName(code: string | null | undefined): string | null {
+  if (!code) return null;
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'region' }).of(code.toUpperCase()) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+const BILLED_FROM_NAME = 'Tellann Technologies';
+const BILLED_FROM_ADDRESS = 'Block 145, F-Line, Ewet Housing Extension, Uyo, Akwa Ibom, Nigeria';
+
+function billedFromEmail(): string {
+  const raw = process.env.EMAIL_FROM_BILLING || 'Tellann Billing <billing@tellann.co>';
+  const match = raw.match(/<([^>]+)>/);
+  return match ? match[1] : raw;
+}
+
 export interface InvoiceContext {
   prisma: PrismaClient;
   emailService: NotificationEmailService;
@@ -62,10 +90,14 @@ export async function buildInvoiceDocument(prisma: PrismaClient, invoiceId: stri
       profile?.addressLine1,
       profile?.addressLine2,
       [profile?.city, profile?.region, profile?.postalCode].filter(Boolean).join(', '),
-      profile?.countryCode,
+      countryName(profile?.countryCode),
     ].filter((line): line is string => Boolean(line && line.trim())),
     taxId: profile?.taxId ?? null,
     organizationName: organization?.name ?? '',
+
+    billedFromName: BILLED_FROM_NAME,
+    billedFromAddress: BILLED_FROM_ADDRESS,
+    billedFromEmail: billedFromEmail(),
 
     planName: `${invoice.planType} — ${invoice.billingInterval === BillingInterval.ANNUAL ? 'Annual' : 'Monthly'}`,
     billingPeriodStart: invoice.periodStart.toISOString(),
@@ -78,13 +110,15 @@ export async function buildInvoiceDocument(prisma: PrismaClient, invoiceId: stri
     taxJurisdiction: invoice.taxJurisdiction,
     tax: formatMoney(invoice.tax, invoice.currency),
     total: formatMoney(invoice.total, invoice.currency),
+    totalSymbol: formatMoneyWithSymbol(invoice.total, invoice.currency),
 
     provider: invoice.provider ?? '',
     providerReference: invoice.providerReference ?? '',
   };
 
   const pdf = await generateInvoicePdf(data);
-  const filename = `tellann-${isPaid ? 'receipt' : 'invoice'}-${invoice.invoiceNumber}.pdf`;
+  const numberSuffix = invoice.invoiceNumber.slice(-6).toUpperCase();
+  const filename = `Tellann-${isPaid ? 'receipt' : 'invoice'}-${numberSuffix}.pdf`;
   return { invoice, data, pdf, filename };
 }
 
