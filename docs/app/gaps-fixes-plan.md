@@ -1291,9 +1291,11 @@ model AIUsageDailyAggregate {
 
 ## 13. Phase 10 — Admin Governance Views
 
+> **Implemented (verified 14 November 2026).** These routes now exist, along with jobs, email, feedback, plans, users, organizations, and feature-flags administration. The remainder of this section is the original delivery specification, not an outstanding-work list.
+
 ### 13.1 Dashboard Routes
 
-Add:
+Implemented routes:
 
 ```txt
 /apps/dashboard/src/app/admin/rulesets

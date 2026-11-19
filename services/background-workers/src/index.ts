@@ -693,10 +693,14 @@ async function main() {
 
   const redisUrl = process.env.REDIS_URL;
   let bullBoardMiddleware: any = null;
+  // Populated below when BullMQ is active, and reused by the
+  // /admin/queues/status route instead of creating yet more Queue instances.
+  let liveQueues: any[] = [];
 
   if (redisUrl) {
     console.log('[background-workers] REDIS_URL detected — using BullMQ persistent scheduler');
     const { queues } = await startWithBullMQ(redisUrl);
+    liveQueues = queues;
 
     // Get Bull Board middleware for the HTTP server
     const { ExpressAdapter } = await import('@bull-board/express');
@@ -752,6 +756,21 @@ async function main() {
     // Prometheus metrics
     app.get('/metrics', async (req: any, res: any) => {
       await metrics.metricsHandler(req, res);
+    });
+
+    // Live per-queue job counts — reuses the Queue instances startWithBullMQ
+    // already created rather than opening new Redis connections per request.
+    // Auth lives at the gateway (api-gateway's requireSystemAdmin on
+    // GET /admin/queues/status), not here: this port is expected to sit
+    // behind that proxy and not be reachable directly in production.
+    app.get('/admin/queues/status', async (_req: any, res: any) => {
+      const queues = await Promise.all(
+        liveQueues.map(async (queue: any) => ({
+          name: queue.name,
+          ...(await queue.getJobCounts('waiting', 'active', 'completed', 'failed', 'delayed', 'paused')),
+        })),
+      );
+      res.json({ queues, generatedAt: new Date().toISOString() });
     });
 
     // Bull Board admin UI

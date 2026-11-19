@@ -14,7 +14,9 @@ import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/
 import { permissionsForRole } from '@tellann/authz';
 import {
   createOIDCProvider,
+  buildAuthorizationURL,
   deleteOIDCProvider,
+  exchangeOIDCCode,
   findOIDCProviderByEmailDomain,
   getOIDCProviderForOrg,
   updateOIDCProvider,
@@ -94,9 +96,18 @@ function base64UrlSha256(text: string): string {
   return crypto.createHash('sha256').update(text).digest('base64url');
 }
 
-function issueDesktopAccessToken(user: { id: string; email: string }, deviceSessionId: string) {
+async function issueDesktopAccessToken(user: { id: string; email: string }, deviceSessionId: string) {
+  // Keeps desktop-issued tokens carrying the same isSystemAdmin claim the web
+  // session path signs (see /auth/login, /auth/refresh, /auth/me) — without
+  // this, a desktop-issued token can never pass onboarding-api's
+  // verifySystemAdmin check no matter what the UI gates on.
+  await ensureConfiguredSystemAdmin(user);
+  const adminRecord = await prisma.systemAdmin.findFirst({
+    where: { userId: user.id, revokedAt: null },
+    select: { id: true },
+  });
   return jwt.sign(
-    { sub: user.id, email: user.email, deviceSessionId, client: 'desktop' },
+    { sub: user.id, email: user.email, deviceSessionId, client: 'desktop', isSystemAdmin: adminRecord !== null },
     JWT_SECRET,
     { expiresIn: '15m' },
   );
@@ -150,6 +161,22 @@ async function emitActivationEvent(organizationId: string, eventName: string) {
   }
 }
 
+/**
+ * Promote the one explicitly configured bootstrap identity when it first
+ * authenticates.  Keeping this on the authenticated path means the setting
+ * cannot create an account or grant access to an arbitrary request body.
+ */
+async function ensureConfiguredSystemAdmin(user: { id: string; email: string }): Promise<void> {
+  const configuredEmail = process.env.SYSTEM_ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
+  if (!configuredEmail || user.email.trim().toLowerCase() !== configuredEmail) return;
+
+  await prisma.systemAdmin.upsert({
+    where: { userId: user.id },
+    create: { userId: user.id, scope: 'FULL' },
+    update: { revokedAt: null, scope: 'FULL' },
+  });
+}
+
 // Cookie Options
 const cookieDomain = process.env.AUTH_COOKIE_DOMAIN || process.env.COOKIE_DOMAIN;
 const COOKIE_OPTS = {
@@ -190,6 +217,7 @@ async function issueAuthSession(req: Request, res: Response, user: any, isNewUse
   });
   await writeAuditLog(user.id, user.memberships?.[0]?.organizationId || null, AuditAction.LOGIN_SUCCESS, req);
 
+  await ensureConfiguredSystemAdmin(user);
   const adminRecord = await prisma.systemAdmin.findFirst({
     where: {
       userId: user.id,
@@ -463,7 +491,7 @@ app.post('/auth/desktop/token', async (req: Request, res: Response) => {
     });
   });
   res.json({
-    accessToken: issueDesktopAccessToken(user, device.id),
+    accessToken: await issueDesktopAccessToken(user, device.id),
     refreshToken: rawRefreshToken,
     expiresIn: 15 * 60,
     deviceSessionId: device.id,
@@ -515,7 +543,7 @@ app.post('/auth/desktop/refresh', async (req: Request, res: Response) => {
     },
   });
   res.json({
-    accessToken: issueDesktopAccessToken(session.user, session.id),
+    accessToken: await issueDesktopAccessToken(session.user, session.id),
     refreshToken: nextRefreshToken,
     expiresIn: 15 * 60,
   });
@@ -576,6 +604,57 @@ app.post('/auth/oidc/identify', async (req: Request, res: Response) => {
   if (!email) return res.status(400).json({ error: 'EMAIL_REQUIRED' });
   const provider = await findOIDCProviderByEmailDomain(email);
   res.json(provider ? { available: true, provider: { displayName: provider.displayName, providerPreset: provider.providerPreset } } : { available: false });
+});
+
+const OIDC_STATE_COOKIE = 'tellann_oidc_state';
+
+app.post('/auth/oidc/start', async (req: Request, res: Response) => {
+  const email = String(req.body.email ?? '').trim().toLowerCase();
+  const redirectPath = typeof req.body.redirectPath === 'string' && req.body.redirectPath.startsWith('/')
+    ? req.body.redirectPath
+    : '/';
+  if (!email) return res.status(400).json({ error: 'EMAIL_REQUIRED' });
+
+  try {
+    const provider = await findOIDCProviderByEmailDomain(email);
+    if (!provider) return res.status(404).json({ error: 'OIDC_PROVIDER_NOT_FOUND', message: 'No SSO provider is configured for this email domain.' });
+    const authorization = await buildAuthorizationURL({ organizationId: provider.organizationId });
+    const stateToken = jwt.sign({
+      state: authorization.state,
+      organizationId: provider.organizationId,
+      redirectPath,
+    }, JWT_SECRET, { expiresIn: '10m' });
+    res.cookie(OIDC_STATE_COOKIE, stateToken, { ...COOKIE_OPTS, maxAge: 10 * 60 * 1000 });
+    res.json({ authorizeUrl: authorization.url });
+  } catch (error) {
+    console.error('[OIDC Start] Error', error);
+    res.status(400).json({ error: 'OIDC_START_FAILED', message: 'Could not start the organization SSO flow.' });
+  }
+});
+
+app.get('/auth/oidc/callback', async (req: Request, res: Response) => {
+  const dashboardUrl = (process.env.DASHBOARD_URL ?? 'http://localhost:3010').replace(/\/$/, '');
+  try {
+    const rawState = req.cookies[OIDC_STATE_COOKIE];
+    if (!rawState || typeof rawState !== 'string') throw new Error('OIDC state cookie is missing');
+    const state = jwt.verify(rawState, JWT_SECRET) as { state: string; organizationId: string; redirectPath: string };
+    if (typeof req.query.state !== 'string' || req.query.state !== state.state) throw new Error('OIDC state mismatch');
+    if (typeof req.query.code !== 'string') throw new Error('OIDC authorization code is missing');
+
+    const identity = await exchangeOIDCCode(state.organizationId, req.query.code);
+    const user = await prisma.user.findUnique({ where: { email: identity.email.toLowerCase() }, include: { memberships: true } });
+    if (!user || !user.memberships.some((membership) => membership.organizationId === state.organizationId)) {
+      throw new Error('The SSO identity is not a member of this organization');
+    }
+    if (user.deletedAt) return accountDeletionPending(res, user);
+    await issueAuthSession(req, res, user);
+    res.clearCookie(OIDC_STATE_COOKIE, COOKIE_OPTS);
+    return res.redirect(`${dashboardUrl}${state.redirectPath.startsWith('/') ? state.redirectPath : '/'}`);
+  } catch (error) {
+    console.error('[OIDC Callback] Error', error);
+    res.clearCookie(OIDC_STATE_COOKIE, COOKIE_OPTS);
+    return res.redirect(`${dashboardUrl}/auth/login?sso_error=1`);
+  }
 });
 
 app.get('/auth/organizations/:orgId/oidc-provider', verifyAuth, async (req: AuthenticatedRequest, res: Response) => {
@@ -919,6 +998,7 @@ app.post('/auth/refresh', async (req: Request, res: Response) => {
     }
 
     await writeAuditLog(session.userId, null, AuditAction.SESSION_REFRESHED, req);
+    await ensureConfiguredSystemAdmin(session.user);
 
     // Issue new tokens
     const adminRecord = await prisma.systemAdmin.findFirst({
@@ -1016,6 +1096,8 @@ app.get('/auth/me', verifyAuth, async (req: AuthenticatedRequest, res: Response)
     if (!user) {
       return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'User record not found' });
     }
+
+    await ensureConfiguredSystemAdmin(user);
 
     const adminRecord = await prisma.systemAdmin.findFirst({
       where: {
@@ -1416,7 +1498,8 @@ app.patch('/auth/preferred-auth-mode', verifyAuth, async (req: AuthenticatedRequ
   }
 });
 
-// Local bootstrap endpoint to promote any registered user to a system administrator
+// Local/operator bootstrap endpoint. It can only target the identity explicitly
+// configured by the deployment; normal users cannot promote arbitrary accounts.
 app.post('/auth/bootstrap-admin', async (req: Request, res: Response) => {
   const { email } = req.body;
   if (!email || typeof email !== 'string') {
@@ -1424,6 +1507,13 @@ app.post('/auth/bootstrap-admin', async (req: Request, res: Response) => {
   }
 
   const cleanEmail = email.toLowerCase().trim();
+  const configuredEmail = process.env.SYSTEM_ADMIN_BOOTSTRAP_EMAIL?.trim().toLowerCase();
+  if (!configuredEmail || cleanEmail !== configuredEmail) {
+    return res.status(403).json({
+      error: 'BOOTSTRAP_NOT_ALLOWED',
+      message: 'This email is not the configured system administrator bootstrap identity.',
+    });
+  }
 
   try {
     let user = await prisma.user.findUnique({

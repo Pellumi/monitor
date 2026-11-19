@@ -479,3 +479,117 @@ test('a checkpoint found in two places can be confirmed as intentional', async (
     await cleanup(data);
   }
 });
+
+test('a checkpoint retrieval already resolved with confidence is placed without AI or a manual choice', async () => {
+  // Static analysis can name the right component/function with no model and no
+  // exact anchor to read for — it just cannot do that for a placement that
+  // needs a statement chosen inside the body. This exercises both: the initial
+  // state (a structural, confidently-ranked candidate) comes back RESOLVED
+  // straight from submission, while the terminal state and the transition (left
+  // AMBIGUOUS, as retrieval would leave anything it was not sure about) still
+  // need a manual choice before automated mode is allowed.
+  const data = await seed();
+  const app = express();
+  app.use(express.json({ limit: '2mb' }));
+  const verifyJwt = (req: Request & { user?: { id: string; email: string } }, res: Response, next: NextFunction) => {
+    if (String(req.headers['x-test-user'] ?? '') !== data.user.id) return res.status(401).json({ error: 'UNAUTHENTICATED' });
+    req.user = { id: data.user.id, email: data.user.email };
+    next();
+  };
+  app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership: (_q, _s, next) => next() }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const created = await request(baseUrl, data.user.id, `/flows/${data.flow.id}/initializations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        flowVersionId: data.version.id, workspaceId: data.workspace.id,
+        repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id,
+        awaitingAnalysis: true,
+      }),
+    });
+    expectStatus(created, 201);
+    const initializationId = String(created.json().initialization.id);
+    const checkpointIds = (created.json().initialization.manifest.checkpoints as Array<{ id: string }>).map((item) => item.id);
+    const structuralCheckpointId = `state:${STATE_START}`;
+
+    const bundle = mappingBundle(checkpointIds);
+    const structuralMapping = bundle.mappings.find((item) => item.checkpointId === structuralCheckpointId)!;
+    (structuralMapping as any).status = 'RESOLVED';
+    (structuralMapping as any).candidates = [{
+      ...structuralMapping.candidates[0],
+      placementKinds: ['COMPONENT_MOUNT', 'FUNCTION_ENTRY'],
+      anchorText: 'export function Cart() {',
+    }];
+
+    const submitted = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mapping-candidates`, {
+      method: 'POST', body: JSON.stringify(bundle),
+    });
+    expectStatus(submitted, 200);
+    const mapped = submitted.json();
+    const structuralFinding = mapped.codeReviewReport.stateFindings.find((item: any) => item.checkpointId === structuralCheckpointId);
+    assert.equal(structuralFinding.mapping.status, 'RESOLVED');
+    assert.equal(structuralFinding.mapping.placementKind, 'COMPONENT_MOUNT');
+    assert.equal(structuralFinding.mapping.anchor, 'export function Cart() {');
+    assert.match(structuralFinding.mapping.rationale, /static analysis/i);
+    // Static analysis placed it, so it was never asked of a model.
+    assert.equal(mapped.codeReviewReport.ai.attempted, false);
+    // The other two checkpoints were left AMBIGUOUS by retrieval and still need review.
+    assert.equal(mapped.codeReviewReport.progress.unresolvedCount, checkpointIds.length - 1);
+
+    const tooEarly = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mode`, {
+      method: 'POST', body: JSON.stringify({ mode: 'AUTOMATED' }),
+    });
+    assert.equal(tooEarly.status, 409, 'the two remaining checkpoints still need a choice');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await cleanup(data);
+  }
+});
+
+test('an oversized anchor line is refused', async () => {
+  const data = await seed();
+  const app = express();
+  app.use(express.json({ limit: '2mb' }));
+  const verifyJwt = (req: Request & { user?: { id: string; email: string } }, res: Response, next: NextFunction) => {
+    if (String(req.headers['x-test-user'] ?? '') !== data.user.id) return res.status(401).json({ error: 'UNAUTHENTICATED' });
+    req.user = { id: data.user.id, email: data.user.email };
+    next();
+  };
+  app.use(createFlowLifecycleRouter({ prisma, verifyJwt, verifyAppOwnership: (_q, _s, next) => next() }));
+  const server = http.createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+
+  try {
+    const created = await request(baseUrl, data.user.id, `/flows/${data.flow.id}/initializations`, {
+      method: 'POST',
+      body: JSON.stringify({
+        flowVersionId: data.version.id, workspaceId: data.workspace.id,
+        repositorySnapshotId: data.snapshot.id, environmentId: data.environment.id,
+        awaitingAnalysis: true,
+      }),
+    });
+    expectStatus(created, 201);
+    const checkpointIds = (created.json().initialization.manifest.checkpoints as Array<{ id: string }>).map((item) => item.id);
+    const initializationId = String(created.json().initialization.id);
+
+    const bundle = mappingBundle(checkpointIds);
+    (bundle.mappings[0].candidates[0] as any).anchorText = 'x'.repeat(501);
+
+    const submitted = await request(baseUrl, data.user.id, `/flow-initializations/${initializationId}/mapping-candidates`, {
+      method: 'POST', body: JSON.stringify(bundle),
+    });
+    assert.equal(submitted.status, 413);
+    assert.equal(submitted.json().error, 'FLOW_MAPPING_ANCHOR_TOO_LARGE');
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    await cleanup(data);
+  }
+});

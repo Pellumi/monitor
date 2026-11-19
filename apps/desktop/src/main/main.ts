@@ -33,6 +33,7 @@ import {
   type RunFlowPlanTransition,
 } from '@tellann/browser-observer';
 import { DesktopCloudClient, cloudApiUrl } from './cloud-client';
+import { resolveDashboardWebUrl } from './dashboard-url';
 import { loadDesktopSession } from './secure-store';
 import { checkSdkVersions } from './sdk-version-check';
 import { distinctMarkers, scanWorkspaceForFlowMarkers } from './flow-marker-scan';
@@ -1598,6 +1599,8 @@ type FlowMappingExcerpt = {
   endLine: number | null;
   content: string;
   redactions: number;
+  /** The candidate's own declaration line. Travels regardless of AI consent. */
+  anchorText: string | null;
 };
 
 /**
@@ -2157,6 +2160,11 @@ async function runFlowMappingSubmission(
       placementKinds: candidate.placementKinds,
       evidenceIds: evidenceIdsFor(candidate),
       rationale: candidate.rationale ?? `Ranked ${candidate.name ?? candidate.path} from codebase entities, graph relationships, and feature evidence.`,
+      // The candidate's declaration line, not an AI excerpt, so it travels
+      // regardless of consent — it is what lets the server place a checkpoint
+      // whose placement kind needs no further reading of the body directly
+      // from static analysis, without a model or a manual choice.
+      anchorText: excerpts.get(candidate.id)?.anchorText ?? null,
       // Source only travels for the candidates a resolver would actually weigh
       // between, and only as much of it as the decision needs.
       excerpt: shareExcerpts && index < MAX_EXCERPTS_PER_CHECKPOINT
@@ -2545,6 +2553,10 @@ async function createWindow(): Promise<void> {
       if (!panel.isDestroyed()) panel.destroy();
     }
     runPanelWindows.clear();
+    for (const panel of replayWindows.values()) {
+      if (!panel.isDestroyed()) panel.destroy();
+    }
+    replayWindows.clear();
   });
   mainWindow.webContents.on('render-process-gone', cancelPendingUploadConsents);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2686,6 +2698,126 @@ function runPanelWindowState(): Record<RunPanelId, boolean> {
 
 function openRunPanelWindows(): Array<[RunPanelId, BrowserWindow]> {
   return [...runPanelWindows.entries()].filter(([, panel]) => !panel.isDestroyed());
+}
+
+const replayWindows = new Map<string, BrowserWindow>();
+
+/**
+ * Hosts a Paystack/Flutterwave checkout page in its own window. Web does a
+ * full-page `window.location.href = checkoutUrl` redirect to these — Electron
+ * has no main-window equivalent, so this opens the real, third-party-hosted
+ * page in an isolated child window (no Tellann preload; it's not our content)
+ * and watches for navigation back to one of the loopback URLs desktop itself
+ * supplied as `successUrl`/`cancelUrl` when it requested the checkout.
+ */
+async function openCheckoutWindow(
+  checkoutUrl: string,
+  successUrlPrefix: string,
+  cancelUrlPrefix: string,
+): Promise<{ status: 'success' | 'cancel' | 'closed' }> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (status: 'success' | 'cancel' | 'closed') => {
+      if (settled) return;
+      settled = true;
+      resolve({ status });
+    };
+
+    const panel = new BrowserWindow({
+      ...secondaryWindowOptions({ width: 480, height: 720 }),
+      icon: themedWindowIconPath(),
+      title: 'Tellann Checkout',
+      webPreferences: {
+        // No preload at all: this hosts a real third-party payment page, not
+        // Tellann's own renderer, unlike every other secondary window here.
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webviewTag: false,
+        devTools: !app.isPackaged,
+      },
+    });
+    panel.setMenu(null);
+    panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+
+    const checkRedirect = (event: Electron.Event, url: string) => {
+      if (url.startsWith(successUrlPrefix)) {
+        event.preventDefault();
+        settle('success');
+        panel.close();
+      } else if (url.startsWith(cancelUrlPrefix)) {
+        event.preventDefault();
+        settle('cancel');
+        panel.close();
+      }
+      // Anything else is a real page the processor is serving — let it load.
+    };
+    panel.webContents.on('will-redirect', checkRedirect);
+    panel.webContents.on('will-navigate', checkRedirect);
+    panel.on('closed', () => settle('closed'));
+
+    void panel.loadURL(checkoutUrl);
+  });
+}
+
+/**
+ * Opens a session's DOM replay in its own window, isolated from the rest of
+ * the app: no Tellann bridge (see preload/replay-preload.ts), so the
+ * recorded, untrusted DOM it renders via rrweb can never reach `window.tellann`,
+ * the filesystem, or any other IPC surface. The main process fetches and
+ * gunzips the event chunks itself (DesktopCloudClient.replayEvents) and pushes
+ * the finished array in once the window signals it's ready to receive it.
+ */
+async function openReplayWindow(sessionId: string): Promise<void> {
+  const existing = replayWindows.get(sessionId);
+  if (existing && !existing.isDestroyed()) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show();
+    existing.focus();
+    return;
+  }
+  const events = await cloud.replayEvents(sessionId);
+  const panel = new BrowserWindow({
+    ...secondaryWindowOptions({ width: 900, height: 700 }),
+    icon: themedWindowIconPath(),
+    show: false,
+    title: 'Session Replay — Tellann',
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/replay-preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+      webviewTag: false,
+      devTools: !app.isPackaged,
+    },
+  });
+  replayWindows.set(sessionId, panel);
+  panel.setMenu(null);
+  panel.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  panel.webContents.on('will-navigate', (event, url) => {
+    const allowed = process.env.VITE_DEV_SERVER_URL;
+    if (!allowed || !url.startsWith(allowed)) event.preventDefault();
+  });
+  panel.once('ready-to-show', () => {
+    if (!panel.isDestroyed()) panel.show();
+  });
+  panel.on('closed', () => {
+    if (replayWindows.get(sessionId) === panel) replayWindows.delete(sessionId);
+  });
+
+  const readyHandler = (event: Electron.IpcMainEvent) => {
+    if (event.sender === panel.webContents) panel.webContents.send('tellann:replay:events', events);
+  };
+  ipcMain.on('tellann:replay:ready', readyHandler);
+  panel.on('closed', () => ipcMain.removeListener('tellann:replay:ready', readyHandler));
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  const query = { view: 'session-replay', sessionId };
+  if (devUrl) {
+    await loadRendererUrlWithRetry(panel, `${devUrl}?${new URLSearchParams(query).toString()}`);
+  } else {
+    await panel.loadFile(path.join(__dirname, '../../renderer/index.html'), { query });
+  }
 }
 
 /** Tells the run page that one panel detached or came back. */
@@ -2880,6 +3012,315 @@ function registerIpc(): void {
     assertTrustedSender(event);
     if (typeof id !== 'string') throw new Error('INVALID_ID');
     return notificationClient.open(id);
+  });
+  ipcMain.handle(IPC.notificationUnreadCount, async (event) => {
+    assertTrustedSender(event);
+    return notificationClient.getUnreadCount();
+  });
+  ipcMain.handle(IPC.notificationPreferencesList, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.notificationPreferences(organizationId);
+  });
+  ipcMain.handle(IPC.notificationPreferencesUpdate, async (event, organizationId: unknown, category: unknown, patch: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof category !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.updateNotificationPreference(organizationId, category, (patch ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.getMe, async (event) => {
+    assertTrustedSender(event);
+    return cloud.me();
+  });
+  ipcMain.handle(IPC.updateMe, async (event, patch: unknown) => {
+    assertTrustedSender(event);
+    return cloud.updateMe((patch ?? {}) as { displayName?: string });
+  });
+  ipcMain.handle(IPC.uploadAvatar, async (event, filePath: unknown) => {
+    assertTrustedSender(event);
+    if (typeof filePath !== 'string' || !filePath.trim()) throw new Error('INVALID_PATH');
+    await cloud.uploadAvatarFromPath(filePath);
+  });
+  ipcMain.handle(IPC.setGeneratedAvatar, async (event, avatarUrl: unknown) => {
+    assertTrustedSender(event);
+    if (typeof avatarUrl !== 'string') throw new Error('INVALID_AVATAR_URL');
+    await cloud.setGeneratedAvatar(avatarUrl);
+  });
+  ipcMain.handle(IPC.deleteAvatar, async (event) => {
+    assertTrustedSender(event);
+    await cloud.deleteAvatar();
+  });
+  ipcMain.handle(IPC.getPreferences, async (event) => {
+    assertTrustedSender(event);
+    return cloud.preferences();
+  });
+  ipcMain.handle(IPC.updatePreferences, async (event, patch: unknown) => {
+    assertTrustedSender(event);
+    return cloud.updatePreferences((patch ?? {}) as { version: number });
+  });
+  ipcMain.handle(IPC.getBillingProfile, async (event) => {
+    assertTrustedSender(event);
+    return cloud.billingProfile();
+  });
+  ipcMain.handle(IPC.updateBillingProfile, async (event, patch: unknown) => {
+    assertTrustedSender(event);
+    return cloud.updateBillingProfile((patch ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.listMembers, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.members(organizationId);
+  });
+  ipcMain.handle(IPC.updateMemberRole, async (event, organizationId: unknown, userId: unknown, role: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof userId !== 'string' || typeof role !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.updateMemberRole(organizationId, userId, role as any);
+  });
+  ipcMain.handle(IPC.removeMember, async (event, organizationId: unknown, userId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof userId !== 'string') throw new Error('INVALID_ARGS');
+    await cloud.removeMember(organizationId, userId);
+  });
+  ipcMain.handle(IPC.listInvitations, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.invitations(organizationId);
+  });
+  ipcMain.handle(IPC.createInvitation, async (event, organizationId: unknown, email: unknown, role: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof email !== 'string' || typeof role !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.createInvitation(organizationId, email, role as any);
+  });
+  ipcMain.handle(IPC.cancelInvitation, async (event, organizationId: unknown, invitationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof invitationId !== 'string') throw new Error('INVALID_ARGS');
+    await cloud.cancelInvitation(organizationId, invitationId);
+  });
+  ipcMain.handle(IPC.listAuditLogs, async (event, organizationId: unknown, query: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.auditLogs(organizationId, (query ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.getGraphVersions, async (event, applicationId: unknown, flowId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string' || typeof flowId !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.graphVersions(applicationId, flowId);
+  });
+  ipcMain.handle(IPC.getCoverageHistory, async (event, applicationId: unknown, flowId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string' || typeof flowId !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.coverageHistory(applicationId, flowId);
+  });
+  ipcMain.handle(IPC.getGraphVersionDiff, async (event, applicationId: unknown, flowId: unknown, from: unknown, to: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string' || typeof flowId !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.graphVersionDiff(applicationId, flowId, from as string | number, to as string | number);
+  });
+  ipcMain.handle(IPC.getReconciliationReports, async (event, applicationId: unknown, environmentId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.reconciliationReports(applicationId, typeof environmentId === 'string' ? environmentId : undefined);
+  });
+  ipcMain.handle(IPC.runReconciliation, async (event, applicationId: unknown, input: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.runReconciliation(applicationId, (input ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.exportReconciliation, async (event, applicationId: unknown, format: unknown, environmentId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string' || (format !== 'json' && format !== 'csv')) throw new Error('INVALID_ARGS');
+    return cloud.exportReconciliation(applicationId, format, typeof environmentId === 'string' ? environmentId : undefined);
+  });
+  ipcMain.handle(IPC.getWorkflows, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.workflows(applicationId);
+  });
+  ipcMain.handle(IPC.getLatestReport, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.latestReport(applicationId);
+  });
+  ipcMain.handle(IPC.getEndpointAnalysis, async (event, applicationId: unknown, options: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.endpointAnalysis(applicationId, (options ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.getBehavioralGraph, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.behavioralGraph(applicationId);
+  });
+  ipcMain.handle(IPC.listSessions, async (event, applicationId: unknown, filters: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.sessions(applicationId, (filters ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.listEndUsers, async (event, applicationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof applicationId !== 'string') throw new Error('INVALID_APPLICATION_ID');
+    return cloud.endUsers(applicationId);
+  });
+  ipcMain.handle(IPC.getSessionTimeline, async (event, sessionId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof sessionId !== 'string') throw new Error('INVALID_SESSION_ID');
+    return cloud.sessionTimeline(sessionId);
+  });
+  ipcMain.handle(IPC.getReplayManifest, async (event, sessionId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof sessionId !== 'string') throw new Error('INVALID_SESSION_ID');
+    return cloud.replayManifest(sessionId);
+  });
+  ipcMain.handle(IPC.openReplayWindow, async (event, sessionId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof sessionId !== 'string') throw new Error('INVALID_SESSION_ID');
+    await openReplayWindow(sessionId);
+  });
+  ipcMain.handle(IPC.mfaStatus, async (event) => {
+    assertTrustedSender(event);
+    return cloud.mfaStatus();
+  });
+  ipcMain.handle(IPC.mfaSetup, async (event) => {
+    assertTrustedSender(event);
+    return cloud.mfaSetup();
+  });
+  ipcMain.handle(IPC.mfaEnable, async (event, token: unknown) => {
+    assertTrustedSender(event);
+    if (typeof token !== 'string') throw new Error('INVALID_TOKEN');
+    return cloud.mfaEnable(token);
+  });
+  ipcMain.handle(IPC.mfaSetupCancel, async (event) => {
+    assertTrustedSender(event);
+    await cloud.mfaSetupCancel();
+  });
+  ipcMain.handle(IPC.mfaEmailSend, async (event) => {
+    assertTrustedSender(event);
+    await cloud.mfaEmailSend();
+  });
+  ipcMain.handle(IPC.mfaEmailEnable, async (event, code: unknown) => {
+    assertTrustedSender(event);
+    if (typeof code !== 'string') throw new Error('INVALID_CODE');
+    return cloud.mfaEmailEnable(code);
+  });
+  ipcMain.handle(IPC.mfaDisable, async (event, proof: unknown) => {
+    assertTrustedSender(event);
+    return cloud.mfaDisable((proof ?? {}) as { token?: string; password?: string });
+  });
+  ipcMain.handle(IPC.listPairedDevices, async (event) => {
+    assertTrustedSender(event);
+    return cloud.pairedDevices();
+  });
+  ipcMain.handle(IPC.revokePairedDevice, async (event, deviceId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof deviceId !== 'string') throw new Error('INVALID_DEVICE_ID');
+    await cloud.revokePairedDevice(deviceId);
+  });
+  ipcMain.handle(IPC.setPassword, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    await cloud.setPassword((input ?? {}) as { password: string; currentPassword?: string });
+  });
+  ipcMain.handle(IPC.getBillingPlans, async (event) => {
+    assertTrustedSender(event);
+    return cloud.billingPlans();
+  });
+  ipcMain.handle(IPC.getBillingSubscription, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.billingSubscription(organizationId);
+  });
+  ipcMain.handle(IPC.getBillingInvoices, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.billingInvoices(organizationId);
+  });
+  ipcMain.handle(IPC.getTrialEligibility, async (event) => {
+    assertTrustedSender(event);
+    return cloud.trialEligibility();
+  });
+  ipcMain.handle(IPC.startTrial, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    return cloud.startTrial(organizationId);
+  });
+  ipcMain.handle(IPC.billingCheckout, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    return cloud.checkout(input as Parameters<typeof cloud.checkout>[0]);
+  });
+  ipcMain.handle(IPC.getCheckoutStatus, async (event, invoiceId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof invoiceId !== 'string') throw new Error('INVALID_INVOICE_ID');
+    return cloud.checkoutStatus(invoiceId);
+  });
+  ipcMain.handle(IPC.previewSubscriptionChange, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    return cloud.previewSubscriptionChange(input as Parameters<typeof cloud.previewSubscriptionChange>[0]);
+  });
+  ipcMain.handle(IPC.applySubscriptionChange, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    return cloud.applySubscriptionChange(input as Parameters<typeof cloud.applySubscriptionChange>[0]);
+  });
+  ipcMain.handle(IPC.cancelSubscription, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    await cloud.cancelSubscription(organizationId);
+  });
+  ipcMain.handle(IPC.resumeSubscription, async (event, organizationId: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string') throw new Error('INVALID_ORGANIZATION_ID');
+    await cloud.resumeSubscription(organizationId);
+  });
+  ipcMain.handle(IPC.paymentMethodSession, async (event, organizationId: unknown, successUrl: unknown, cancelUrl: unknown) => {
+    assertTrustedSender(event);
+    if (typeof organizationId !== 'string' || typeof successUrl !== 'string' || typeof cancelUrl !== 'string') throw new Error('INVALID_ARGS');
+    return cloud.paymentMethodSession(organizationId, successUrl, cancelUrl);
+  });
+  ipcMain.handle(IPC.openCheckoutWindow, async (event, checkoutUrl: unknown, successUrlPrefix: unknown, cancelUrlPrefix: unknown) => {
+    assertTrustedSender(event);
+    if (typeof checkoutUrl !== 'string' || typeof successUrlPrefix !== 'string' || typeof cancelUrlPrefix !== 'string') throw new Error('INVALID_ARGS');
+    return openCheckoutWindow(checkoutUrl, successUrlPrefix, cancelUrlPrefix);
+  });
+  ipcMain.handle(IPC.adminAiUsage, async (event, days: unknown) => {
+    assertTrustedSender(event);
+    return cloud.adminAiUsage(typeof days === 'number' ? days : undefined);
+  });
+  ipcMain.handle(IPC.adminAiUsageDaily, async (event, days: unknown) => {
+    assertTrustedSender(event);
+    return cloud.adminAiUsageDaily(typeof days === 'number' ? days : undefined);
+  });
+  ipcMain.handle(IPC.adminAiUsageBackfill, async (event, days: unknown) => {
+    assertTrustedSender(event);
+    if (typeof days !== 'number') throw new Error('INVALID_DAYS');
+    await cloud.adminAiUsageBackfill(days);
+  });
+  ipcMain.handle(IPC.adminRulesets, async (event, status: unknown) => {
+    assertTrustedSender(event);
+    return cloud.adminRulesets(typeof status === 'string' ? status : undefined);
+  });
+  ipcMain.handle(IPC.adminPromoteRuleset, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return cloud.adminPromoteRuleset(id);
+  });
+  ipcMain.handle(IPC.adminRuleCandidates, async (event, input: unknown) => {
+    assertTrustedSender(event);
+    return cloud.adminRuleCandidates((input ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.adminApproveCandidate, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return cloud.adminApproveCandidate(id);
+  });
+  ipcMain.handle(IPC.adminRejectCandidate, async (event, id: unknown) => {
+    assertTrustedSender(event);
+    if (typeof id !== 'string') throw new Error('INVALID_ID');
+    return cloud.adminRejectCandidate(id);
+  });
+  ipcMain.handle(IPC.adminAuditLogs, async (event, query: unknown) => {
+    assertTrustedSender(event);
+    return cloud.adminAuditLogs((query ?? {}) as Record<string, unknown>);
+  });
+  ipcMain.handle(IPC.adminQueueStatus, async (event) => {
+    assertTrustedSender(event);
+    return cloud.adminQueueStatus();
   });
   ipcMain.handle(IPC.listRuns, async (event, applicationId: unknown, filters?: unknown) => {
     assertTrustedSender(event);
@@ -3650,10 +4091,7 @@ function registerIpc(): void {
   });
   ipcMain.handle(IPC.openProfile, async (event) => {
     assertTrustedSender(event);
-    const dashboardUrl = (process.env.TELLANN_DASHBOARD_URL ?? 'http://localhost:3010').replace(/\/$/, '');
-    const profileUrl = new URL('/settings/profile', dashboardUrl);
-    if (!['http:', 'https:'].includes(profileUrl.protocol)) throw new Error('PROFILE_URL_BLOCKED');
-    await shell.openExternal(profileUrl.toString());
+    await shell.openExternal(resolveDashboardWebUrl('/settings/profile').toString());
   });
   ipcMain.handle(IPC.chooseWorkspace, async (event) => {
     assertTrustedSender(event);

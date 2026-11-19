@@ -1,5 +1,7 @@
 # TELLANN System Completeness Review
 
+> **Status correction (14 November 2026):** This is a historical point-in-time audit, not the current launch checklist. The dashboard now includes system-admin governance and operational surfaces plus split billing, member, application, security, and integration settings. Older “route not found” findings below are superseded by this correction; re-run the full audit before using its percentages for release decisions.
+
 > **Reviewed against all 33 documentation files in `/docs` and the full codebase structure.**
 > Rating scale: ✅ Complete · 🟡 Partially Complete · ❌ Missing / Not Implemented
 
@@ -173,9 +175,9 @@ This is the **most complete** subsystem in the codebase.
 | Cache warmer background worker | ✅ In `background-workers/src/index.ts` |
 | Promotion workflow (transactional) | 🟡 API routes exist but SYSTEM_ADMIN enforcement is env-var based |
 | Admin ruleset governance endpoints | 🟡 Partially in `fdrs-api` |
-| Dashboard ruleset admin views | ❌ `/admin/rulesets`, `/admin/rule-candidates`, `/admin/ai-usage` routes **not found** in `apps/dashboard/src/app/` |
+| Dashboard ruleset admin views | ✅ Implemented under `apps/dashboard/src/app/admin/` |
 
-**Gap:** The admin governance dashboard (Phase 10 of `gaps-fixes-plan.md`) — ruleset version management, rule candidate review, AI usage views, audit log viewer — has **no dashboard routes**.
+**Resolved:** The admin governance dashboard routes and navigation exist. Access is backed by the DB `SystemAdmin` record; `SYSTEM_ADMIN_BOOTSTRAP_EMAIL` promotes the exact configured identity when it authenticates.
 
 ---
 
@@ -350,10 +352,10 @@ The billing API exists (13 KB) but based on `mvp_implementation_plan.md`:
 | Settings — billing / plan / usage | ❌ No `/settings/billing`, `/settings/plan`, `/settings/usage` routes found |
 | Settings — org members / roles | ❌ Not found |
 | Settings — API keys | ❌ Not found |
-| Admin — rulesets | ❌ Not found |
-| Admin — rule candidates | ❌ Not found |
-| Admin — AI usage | ❌ Not found |
-| Admin — audit logs | ❌ Not found |
+| Admin — rulesets | ✅ Exists |
+| Admin — rule candidates | ✅ Exists |
+| Admin — AI usage | ✅ Exists |
+| Admin — audit logs | ✅ Exists |
 | Organization/App/Env switcher | 🟡 Flagged as needed in MVP plan |
 | Entitlement-aware nav (hide gated features) | ❌ Not confirmed |
 | Expected Coverage Score on Overview | 🟡 Flagged as not yet promoted to headline KPI |
@@ -481,7 +483,7 @@ The plan defines 13 acceptance criteria for completeness. Current status:
 | 8 | Ruleset cache works and invalidates | 🟡 In-memory only; Redis not wired |
 | 9 | AI logs include all required fields | 🟡 Model has all fields; write-path coverage uncertain |
 | 10 | Background workers handle all 5 jobs | 🟡 4 of 5 present; rule-candidate-promoter is a TODO |
-| 11 | Admin views for rulesets/candidates/AI/audit | ❌ No dashboard routes exist |
+| 11 | Admin views for rulesets/candidates/AI/audit | ✅ Implemented |
 | 12 | AI suggestions labeled experimental, never auto-applied | 🟡 Architecture correct; UI labeling unconfirmed |
 | 13 | Security/privacy/provider/ruleset/integration tests present | ❌ Most categories missing |
 
@@ -494,7 +496,7 @@ The plan defines 13 acceptance criteria for completeness. Current status:
 1. **Billing API** — no checkout, no webhooks, no invoice lifecycle. Paying customers cannot pay.
 2. **Entitlement enforcement** — plan restrictions not enforced at API level. All features accessible to all plans.
 3. **ClickHouse / Kafka** — documented as core infrastructure; absent entirely. Events stored in Postgres will not scale.
-4. **Admin dashboard routes** — ruleset governance, AI usage, audit logs, rule candidates: zero dashboard UI.
+4. ~~**Admin dashboard routes**~~ — resolved; governance, AI usage, audit logs, rule candidates, and operational admin surfaces are present.
 5. **`AIUsageDailyAggregate` DB model** — background worker aggregates to console only; no persistent cost/usage tracking.
 6. **`AuditLog` gaps** — security-sensitive actions (ruleset promotion, flow deletion, AI acceptance) not audited.
 7. **Test harness** — `npm run test` not wired for real tests; security, privacy, and integration tests all missing.
@@ -507,7 +509,7 @@ The plan defines 13 acceptance criteria for completeness. Current status:
 11. **Raw product description storage** — `AIFlowDraft.productDescription` should store only redacted version.
 12. **Session replay integrity** — completion heuristic, replay renderer, and timeline accuracy incomplete.
 13. **`BehaviorGraph` version diff endpoint** — needed for drift analysis between declared graph versions.
-14. **Dashboard settings pages** — no billing, member management, or API key management UI.
+14. ~~**Dashboard settings pages**~~ — resolved; split settings routes cover billing, members, applications, security, integrations, and organization controls.
 15. **`AIFlowDraftJob` async queue model** — needed for non-blocking AI draft generation.
 
 ### 🟡 Medium Priority / Post-Launch

@@ -458,6 +458,145 @@ declare global {
         /** A notification arrived while this window was in the foreground. */
         onReceived(callback: (row: DesktopNotification) => void): () => void;
         onOpenDeepLink(callback: (payload: { deepLink: string }) => void): () => void;
+        unreadCount(): Promise<number>;
+        onUnreadCountChanged(callback: (count: number) => void): () => void;
+        preferences(organizationId: string): Promise<import('@tellann/desktop-contracts').NotificationPreference[]>;
+        updatePreference(
+          organizationId: string,
+          category: string,
+          patch: Partial<import('@tellann/desktop-contracts').NotificationPreference>,
+        ): Promise<import('@tellann/desktop-contracts').NotificationPreference>;
+      };
+      account: {
+        getMe(): Promise<import('@tellann/desktop-contracts').UserProfile>;
+        updateMe(patch: { displayName?: string }): Promise<import('@tellann/desktop-contracts').UserProfile>;
+        uploadAvatar(filePath: string): Promise<void>;
+        setGeneratedAvatar(avatarUrl: string): Promise<void>;
+        deleteAvatar(): Promise<void>;
+        getPreferences(): Promise<import('@tellann/desktop-contracts').UserPreferences>;
+        updatePreferences(
+          patch: Partial<import('@tellann/desktop-contracts').UserPreferences> & { version: number },
+        ): Promise<import('@tellann/desktop-contracts').UserPreferences>;
+        getBillingProfile(): Promise<import('@tellann/desktop-contracts').BillingProfile>;
+        updateBillingProfile(
+          patch: Partial<import('@tellann/desktop-contracts').BillingProfile>,
+        ): Promise<import('@tellann/desktop-contracts').BillingProfile>;
+      };
+      org: {
+        members(organizationId: string): Promise<import('@tellann/desktop-contracts').OrganizationMembership[]>;
+        updateMemberRole(
+          organizationId: string,
+          userId: string,
+          role: import('@tellann/desktop-contracts').MemberRole,
+        ): Promise<import('@tellann/desktop-contracts').OrganizationMembership>;
+        removeMember(organizationId: string, userId: string): Promise<void>;
+        invitations(organizationId: string): Promise<import('@tellann/desktop-contracts').PendingInvitation[]>;
+        createInvitation(
+          organizationId: string,
+          email: string,
+          role: import('@tellann/desktop-contracts').MemberRole,
+        ): Promise<import('@tellann/desktop-contracts').PendingInvitation>;
+        cancelInvitation(organizationId: string, invitationId: string): Promise<void>;
+        auditLogs(
+          organizationId: string,
+          query: { page?: number; limit?: number; q?: string; action?: string; from?: string; to?: string },
+        ): Promise<import('@tellann/desktop-contracts').AuditLogPage>;
+      };
+      analytics: {
+        graphVersions(applicationId: string, flowId: string): Promise<import('@tellann/desktop-contracts').GraphVersion[]>;
+        coverageHistory(applicationId: string, flowId: string): Promise<import('@tellann/desktop-contracts').CoverageHistoryPoint[]>;
+        graphVersionDiff(
+          applicationId: string,
+          flowId: string,
+          from: string | number,
+          to: string | number,
+        ): Promise<import('@tellann/desktop-contracts').GraphDiff>;
+        reconciliationReports(applicationId: string, environmentId?: string): Promise<import('@tellann/desktop-contracts').ReconciliationReport[]>;
+        runReconciliation(
+          applicationId: string,
+          input?: { environmentId?: string; expectedGraphId?: string; runId?: string },
+        ): Promise<import('@tellann/desktop-contracts').ReconciliationReport[]>;
+        exportReconciliation(applicationId: string, format: 'json' | 'csv', environmentId?: string): Promise<string>;
+        workflows(applicationId: string): Promise<import('@tellann/desktop-contracts').Workflow[]>;
+        latestReport(applicationId: string): Promise<Record<string, unknown>>;
+        endpointAnalysis(
+          applicationId: string,
+          options?: { windowDays?: number; environmentId?: string; runId?: string },
+        ): Promise<import('@tellann/desktop-contracts').EndpointAnalysis>;
+        behavioralGraph(applicationId: string): Promise<import('@tellann/desktop-contracts').BehavioralGraph>;
+      };
+      sessions: {
+        list(applicationId: string, filters?: Record<string, unknown>): Promise<{ sessions: Record<string, unknown>[]; total: number; cursor: string | null }>;
+        endUsers(applicationId: string): Promise<{ endUsers: Record<string, unknown>[] }>;
+        timeline(sessionId: string): Promise<Record<string, unknown>>;
+        replayManifest(sessionId: string): Promise<{ available: boolean; chunks: unknown[] }>;
+        openReplayWindow(sessionId: string): Promise<void>;
+      };
+      mfa: {
+        status(): Promise<import('@tellann/desktop-contracts').MfaStatus>;
+        setup(): Promise<import('@tellann/desktop-contracts').MfaSetupResponse>;
+        enable(token: string): Promise<import('@tellann/desktop-contracts').BackupCodesResponse>;
+        cancelSetup(): Promise<void>;
+        emailSend(): Promise<void>;
+        emailEnable(code: string): Promise<import('@tellann/desktop-contracts').BackupCodesResponse>;
+        disable(proof: { token?: string; password?: string }): Promise<void>;
+        devices(): Promise<import('@tellann/desktop-contracts').PairedDevice[]>;
+        revokeDevice(deviceId: string): Promise<void>;
+        setPassword(input: { password: string; currentPassword?: string }): Promise<void>;
+      };
+      billing: {
+        plans(): Promise<import('@tellann/desktop-contracts').BillingPlanCatalog>;
+        subscription(organizationId: string): Promise<import('@tellann/desktop-contracts').BillingSubscription>;
+        invoices(organizationId: string): Promise<import('@tellann/desktop-contracts').BillingInvoice[]>;
+        trialEligibility(): Promise<{ eligible: boolean }>;
+        startTrial(organizationId: string): Promise<import('@tellann/desktop-contracts').CheckoutResponse | { status: string }>;
+        checkout(input: {
+          organizationId: string;
+          planType: string;
+          billingInterval: 'MONTHLY' | 'ANNUAL';
+          provider?: string;
+          successUrl: string;
+          cancelUrl: string;
+        }): Promise<import('@tellann/desktop-contracts').CheckoutResponse>;
+        checkoutStatus(invoiceId: string): Promise<import('@tellann/desktop-contracts').CheckoutStatus>;
+        previewChange(input: {
+          organizationId: string;
+          planType: string;
+          billingInterval: 'MONTHLY' | 'ANNUAL';
+        }): Promise<import('@tellann/desktop-contracts').SubscriptionChangePreview>;
+        applyChange(input: {
+          organizationId: string;
+          previewId: string;
+          effectiveMode: 'IMMEDIATE' | 'NEXT_RENEWAL';
+          idempotencyKey: string;
+        }): Promise<Record<string, unknown>>;
+        cancelSubscription(organizationId: string): Promise<void>;
+        resumeSubscription(organizationId: string): Promise<void>;
+        paymentMethodSession(
+          organizationId: string,
+          successUrl: string,
+          cancelUrl: string,
+        ): Promise<import('@tellann/desktop-contracts').CheckoutResponse>;
+        openCheckoutWindow(
+          checkoutUrl: string,
+          successUrlPrefix: string,
+          cancelUrlPrefix: string,
+        ): Promise<{ status: 'success' | 'cancel' | 'closed' }>;
+      };
+      admin: {
+        aiUsage(days?: number): Promise<import('@tellann/desktop-contracts').AiUsageSummary>;
+        aiUsageDaily(days?: number): Promise<Record<string, unknown>[]>;
+        aiUsageBackfill(days: number): Promise<void>;
+        rulesets(status?: string): Promise<import('@tellann/desktop-contracts').Ruleset[]>;
+        promoteRuleset(id: string): Promise<import('@tellann/desktop-contracts').Ruleset>;
+        ruleCandidates(input?: { status?: string; cursor?: string; limit?: number }): Promise<{
+          data: import('@tellann/desktop-contracts').RuleCandidate[];
+          nextCursor: string | null;
+        }>;
+        approveCandidate(id: string): Promise<import('@tellann/desktop-contracts').RuleCandidate>;
+        rejectCandidate(id: string): Promise<import('@tellann/desktop-contracts').RuleCandidate>;
+        auditLogs(query?: { page?: number; limit?: number; q?: string; action?: string }): Promise<import('@tellann/desktop-contracts').AuditLogPage>;
+        queueStatus(): Promise<import('@tellann/desktop-contracts').QueueStatus>;
       };
       system: {
         getVersion(): Promise<string>;

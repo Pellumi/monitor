@@ -118,7 +118,13 @@ function NewAppContent() {
 
   const appLimit = entitlement?.limits?.applications ?? 1;
   const hasReachedLimit =
-    entitlement !== undefined && apps !== undefined && apps.length >= appLimit;
+    entitlement !== undefined &&
+    apps !== undefined &&
+    apps.length >= appLimit &&
+    // A successful create invalidates this list before the router commits the
+    // connect-page navigation. Do not replace that transition with the limit
+    // screen merely because the newly-created application is now counted.
+    !createAppMutation.isSuccess;
 
   if (hasReachedLimit) {
     return (

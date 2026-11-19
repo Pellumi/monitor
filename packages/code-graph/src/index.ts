@@ -1,10 +1,20 @@
-import type { CodeEntity, CodeRelationship } from '@tellann/desktop-contracts';
+import {
+  CODE_INTELLIGENCE_SCHEMA_VERSION,
+  analysisIdentity,
+  assertCanonicalAnalysis,
+  type CodebaseAnalysis,
+  type CodeEntity,
+  type CodeRelationship,
+} from '@tellann/code-intelligence-contracts';
 
 export type GraphScope = {
   organizationId: string;
   applicationId: string;
   snapshotId: string;
   graphVersion: string;
+  contentHash?: string;
+  schemaVersion?: string;
+  analyzerVersions?: Record<string, string>;
 };
 
 export type GraphProjectionQuery = {
@@ -36,6 +46,8 @@ export interface GraphStore {
   /** Create indexes and constraints. Safe to call repeatedly. */
   initialize(): Promise<void>;
   replace(scope: GraphScope, nodes: CodeEntity[], edges: CodeRelationship[]): Promise<void>;
+  /** Validated analyzer output is the preferred write boundary. */
+  replaceAnalysis(scope: GraphScope, analysis: CodebaseAnalysis): Promise<void>;
   project(scope: GraphScope, query: GraphProjectionQuery): Promise<GraphProjection>;
   neighbors(scope: GraphScope, id: string, direction?: 'out' | 'in' | 'both'): Promise<GraphProjection>;
   shortestPath(scope: GraphScope, source: string, target: string, maxDepth?: number): Promise<GraphPath>;
@@ -61,6 +73,9 @@ function encodeNode(node: CodeEntity, scope: GraphScope): Record<string, unknown
     applicationId: scope.applicationId,
     snapshotId: scope.snapshotId,
     graphVersion: scope.graphVersion,
+    contentHash: scope.contentHash ?? '',
+    schemaVersion: scope.schemaVersion ?? CODE_INTELLIGENCE_SCHEMA_VERSION,
+    analyzerVersions: JSON.stringify(scope.analyzerVersions ?? {}),
   };
 }
 
@@ -82,7 +97,7 @@ function decodeNode(raw: unknown): CodeEntity | null {
     }
     if (value[key] === undefined || value[key] === null) value[key] = key === 'evidence' ? [] : {};
   }
-  for (const key of ['organizationId', 'applicationId', 'snapshotId', 'graphVersion']) delete value[key];
+  for (const key of ['organizationId', 'applicationId', 'snapshotId', 'graphVersion', 'contentHash', 'schemaVersion', 'analyzerVersions']) delete value[key];
   return value as unknown as CodeEntity;
 }
 
@@ -168,6 +183,8 @@ export class Neo4jGraphStore implements GraphStore {
            id: item.id, kind: item.kind, source: item.source, target: item.target,
            confidence: item.confidence, evidence: item.evidence,
            snapshotId: $snapshotId, graphVersion: $graphVersion,
+           contentHash: $contentHash, schemaVersion: $schemaVersion,
+           analyzerVersions: $analyzerVersions,
            organizationId: $organizationId, applicationId: $applicationId
          }]->(b)`,
         {
@@ -181,11 +198,23 @@ export class Neo4jGraphStore implements GraphStore {
           })),
           snapshotId: scope.snapshotId,
           graphVersion: scope.graphVersion,
+          contentHash: scope.contentHash ?? '',
+          schemaVersion: scope.schemaVersion ?? CODE_INTELLIGENCE_SCHEMA_VERSION,
+          analyzerVersions: JSON.stringify(scope.analyzerVersions ?? {}),
           organizationId: scope.organizationId,
           applicationId: scope.applicationId,
         },
       );
     }
+  }
+
+  async replaceAnalysis(scope: GraphScope, analysis: CodebaseAnalysis): Promise<void> {
+    assertCanonicalAnalysis(analysis);
+    const identity = analysisIdentity(analysis);
+    if (scope.graphVersion !== identity.graphVersion) throw new Error('GRAPH_SCOPE_VERSION_MISMATCH');
+    if (scope.contentHash && scope.contentHash !== identity.contentHash) throw new Error('GRAPH_SCOPE_CONTENT_MISMATCH');
+    if (scope.schemaVersion && scope.schemaVersion !== identity.schemaVersion) throw new Error('GRAPH_SCOPE_SCHEMA_MISMATCH');
+    await this.replace({ ...scope, ...identity }, analysis.entities, analysis.relationships);
   }
 
   /**

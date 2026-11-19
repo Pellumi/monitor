@@ -1,5 +1,6 @@
 import React from "react";
 import { X } from "lucide-react";
+import { openDashboardWebUrl } from "../dashboard-url";
 
 export interface EntitlementModalProps {
   isOpen: boolean;
@@ -79,15 +80,7 @@ export function EntitlementModal({
   const nextPlan = customRequiredPlan ?? resolved.nextPlan;
 
   const handleUpgrade = () => {
-    const dashboardBaseUrl = (
-      import.meta.env.VITE_TELLANN_DASHBOARD_URL || "http://localhost:3010"
-    ).replace(/\/$/, "");
-    const dashboardBillingUrl = `${dashboardBaseUrl}/settings/billing`;
-    if (window.tellann?.system?.openExternal) {
-      void window.tellann.system.openExternal(dashboardBillingUrl);
-    } else {
-      window.open(dashboardBillingUrl, "_blank");
-    }
+    openDashboardWebUrl("/settings/billing");
     onClose();
   };
 

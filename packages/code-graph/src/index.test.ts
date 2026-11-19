@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CodeEntity, CodeRelationship } from '@tellann/desktop-contracts';
+import { computeAnalysisGraphVersion, type CodebaseAnalysis } from '@tellann/code-intelligence-contracts';
 import { createGraphStore, Neo4jGraphStore } from './index';
 
 type Captured = { statement: string; parameters: Record<string, unknown> };
@@ -68,6 +69,30 @@ const relationship = (): CodeRelationship => ({
   evidence: [],
 });
 
+function canonicalAnalysis(): CodebaseAnalysis {
+  const analysis = {
+    id: 'analysis:1',
+    workspaceId: '00000000-0000-4000-8000-000000000001',
+    repositoryFingerprint: 'repo',
+    graphVersion: '',
+    analyzerVersions: { coordinator: '2.3.0' },
+    status: 'COMPLETED', progress: 100, stageMessage: 'Complete',
+    startedAt: '2026-11-14T00:00:00.000Z', completedAt: '2026-11-14T00:00:01.000Z',
+    revision: null, branch: null, dirty: false, contentHash: 'content',
+    entities: [entity(), entity({ id: 'database_model:order', type: 'database_model', name: 'Order' })],
+    relationships: [relationship()],
+    features: [], findings: [], architecture: null, coverage: null, incremental: null, explanations: [],
+    summary: {
+      files: 1, symbols: 2, relationships: 1, applications: 1, services: 0,
+      domains: 0, features: 0, endpoints: 0, dataModels: 1, events: 0,
+      externalServices: 0, tests: 0, coveragePercent: 100, confidence: 1,
+    },
+    warnings: [], notices: [],
+  } satisfies CodebaseAnalysis;
+  analysis.graphVersion = computeAnalysisGraphVersion(analysis);
+  return analysis;
+}
+
 test('creates indexes before writing so edge matching is not a full label scan', async () => {
   const { store, calls, restore } = stubStore(() => []);
   try {
@@ -102,6 +127,38 @@ test('scopes every stored node and edge to the organisation, application and sna
   // Neo4j has no nested-map property, so these are stored as JSON text.
   assert.equal(typeof written.metadata, 'string');
   assert.equal(typeof written.evidence, 'string');
+});
+
+test('validated analysis writes one canonical identity to nodes and relationships', async () => {
+  const analysis = canonicalAnalysis();
+  const { store, calls, restore } = stubStore(() => []);
+  try {
+    await store.replaceAnalysis({ ...SCOPE, graphVersion: analysis.graphVersion }, analysis);
+  } finally {
+    restore();
+  }
+  const nodeWrite = calls.find((call) => call.statement.includes('CREATE (n:CodeEntity)'))!;
+  const edgeWrite = calls.find((call) => call.statement.includes('CREATE (a)-[:CODE_RELATION'))!;
+  const written = (nodeWrite.parameters.nodes as Array<Record<string, unknown>>)[0]!;
+  assert.equal(written.contentHash, analysis.contentHash);
+  assert.equal(written.schemaVersion, '1.0');
+  assert.equal(edgeWrite.parameters.contentHash, analysis.contentHash);
+  assert.equal(edgeWrite.parameters.schemaVersion, '1.0');
+});
+
+test('validated analysis rejects semantic drift before touching the graph store', async () => {
+  const analysis = canonicalAnalysis();
+  analysis.entities[0]!.name = 'changed-after-versioning';
+  const { store, calls, restore } = stubStore(() => []);
+  try {
+    await assert.rejects(
+      store.replaceAnalysis({ ...SCOPE, graphVersion: analysis.graphVersion }, analysis),
+      /CODE_GRAPH_VERSION_MISMATCH/,
+    );
+    assert.equal(calls.length, 0);
+  } finally {
+    restore();
+  }
 });
 
 test('decodes metadata and evidence back into the shape the contract promises', async () => {

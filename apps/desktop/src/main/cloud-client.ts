@@ -36,6 +36,35 @@ import type {
   QAMentionableMember,
   QARunAnnotation,
   UpdateQARunAnnotation,
+  NotificationPreference,
+  UserProfile,
+  UserPreferences,
+  BillingProfile,
+  OrganizationMembership,
+  MemberRole,
+  PendingInvitation,
+  AuditLogPage,
+  GraphVersion,
+  CoverageHistoryPoint,
+  GraphDiff,
+  ReconciliationReport,
+  Workflow,
+  EndpointAnalysis,
+  BehavioralGraph,
+  MfaStatus,
+  MfaSetupResponse,
+  BackupCodesResponse,
+  PairedDevice,
+  BillingPlanCatalog,
+  BillingSubscription,
+  BillingInvoice,
+  CheckoutResponse,
+  CheckoutStatus,
+  SubscriptionChangePreview,
+  AiUsageSummary,
+  Ruleset,
+  RuleCandidate,
+  QueueStatus,
 } from "@tellann/desktop-contracts";
 import type { InstrumentationCheckpoint } from "./git-checkpoint";
 import { resolveTelemetryGateway } from "./gateway-endpoint";
@@ -61,6 +90,23 @@ loadDesktopEnvironment();
  */
 const cloudFetch: typeof fetch = (input: any, init: any = {}) =>
   net.fetch(input, { credentials: "omit", ...init });
+
+/**
+ * Reads the `isSystemAdmin` claim straight out of the stored access token's
+ * payload, with no signature check — this is only ever used to decide
+ * whether to show the Admin nav entry. Every `/admin/*` call is still
+ * independently authorized server-side (api-gateway's requireSystemAdmin),
+ * so a forged/stale claim here can show a menu item, never grant access.
+ */
+function decodeIsSystemAdminClaim(accessToken: string): boolean {
+  try {
+    const payload = accessToken.split(".")[1];
+    const json = Buffer.from(payload, "base64url").toString("utf8");
+    return JSON.parse(json)?.isSystemAdmin === true;
+  } catch {
+    return false;
+  }
+}
 
 const API_URL = (
   process.env.TELLANN_API_URL ?? "http://127.0.0.1:3000"
@@ -106,6 +152,14 @@ const REQUEST_TIMEOUT_MS = 15_000;
 // default above for ordinary API traffic, but do not abort valid generation
 // work while the provider is still responding.
 const DOCUMENT_GENERATION_TIMEOUT_MS = 5 * 60_000;
+// Resolving a Flow's checkpoints batches the declared checkpoints and may
+// call several AI providers per batch — a weaker model answering with nothing
+// usable falls through to the next one in the chain rather than giving up, and
+// every batch runs with its own repair-prompt retry on top of that. All of it
+// is still real, in-progress work, not a stuck request, so it gets the same
+// room as document generation rather than the short default meant for
+// ordinary API traffic.
+const FLOW_MAPPING_RESOLUTION_TIMEOUT_MS = 5 * 60_000;
 
 async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
@@ -133,15 +187,19 @@ async function jsonRequest<T>(url: string, init: RequestInit = {}): Promise<T> {
       signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (cause) {
+    // Where the request actually went is an operator/diagnostic detail, not
+    // something a person reads in a banner — kept on the error for logs and
+    // support, never in the message itself.
     const endpoint = new URL(url).origin;
     const timedOut = cause instanceof DOMException && cause.name === "TimeoutError";
     const error = new Error(
       timedOut
-        ? `The request to Tellann cloud at ${endpoint} timed out. Retry the operation.`
-        : `Tellann cloud is unavailable at ${endpoint}. Check that the API gateway is running, then retry.`,
+        ? "Tellann's service is taking longer than expected to respond. Try again in a moment."
+        : "Tellann can't reach its service right now. Check your connection and try again.",
     );
     Object.assign(error, {
       code: timedOut ? "CLOUD_TIMEOUT" : "CLOUD_UNAVAILABLE",
+      endpoint,
       cause,
     });
     throw error;
@@ -224,8 +282,9 @@ export class DesktopCloudClient {
           authenticated: true,
           deviceSessionId: value.deviceSessionId,
           user: value.user,
+          isSystemAdmin: decodeIsSystemAdminClaim(value.accessToken),
         }
-      : { authenticated: false, deviceSessionId: null, user: null };
+      : { authenticated: false, deviceSessionId: null, user: null, isSystemAdmin: false };
   }
 
   localWorkspaceScope(): string | null {
@@ -460,6 +519,138 @@ export class DesktopCloudClient {
       name: String(item.name),
       slug: typeof item.slug === "string" ? item.slug : null,
     }));
+  }
+
+  // ── Settings: Notification preferences (onboarding-api) ─────────────────
+
+  async notificationPreferences(organizationId: string): Promise<NotificationPreference[]> {
+    return this.request<NotificationPreference[]>(
+      `/organizations/${organizationId}/notification-preferences`,
+    );
+  }
+
+  async updateNotificationPreference(
+    organizationId: string,
+    category: string,
+    patch: Partial<Pick<NotificationPreference,
+      "emailEnabled" | "inAppEnabled" | "webhookEnabled" | "webPushEnabled" | "desktopEnabled" |
+      "minSeverity" | "quietHoursEnabled" | "quietHoursStart" | "quietHoursEnd" | "criticalOverridesQuietHours" | "frequency">>,
+  ): Promise<NotificationPreference> {
+    return this.request<NotificationPreference>(
+      `/organizations/${organizationId}/notification-preferences/${category}`,
+      { method: "PUT", body: JSON.stringify(patch) },
+    );
+  }
+
+  // ── Settings: Account / profile / preferences (auth-api) ────────────────
+
+  async me(): Promise<UserProfile> {
+    // GET /auth/me wraps the profile under `user` (alongside `memberships`),
+    // unlike PATCH /auth/me below, which returns the flat shape directly.
+    const response = await this.request<Json>("/auth/me");
+    const data = (response.user as Json | undefined) ?? response;
+    return {
+      id: String(data.id),
+      email: String(data.email),
+      displayName: typeof data.displayName === "string" ? data.displayName : null,
+      avatarUrl: typeof data.avatarUrl === "string" ? data.avatarUrl : null,
+    };
+  }
+
+  async updateMe(patch: { displayName?: string }): Promise<UserProfile> {
+    const data = await this.request<Json>("/auth/me", { method: "PATCH", body: JSON.stringify(patch) });
+    this.clearAvatarCache();
+    return {
+      id: String(data.id),
+      email: String(data.email),
+      displayName: typeof data.displayName === "string" ? data.displayName : null,
+      avatarUrl: typeof data.avatarUrl === "string" ? data.avatarUrl : null,
+    };
+  }
+
+  /** `filePath` is a local path the renderer resolved via `getPathForFile` from a picked/dropped image. */
+  async uploadAvatarFromPath(filePath: string): Promise<void> {
+    const fs = await import("node:fs/promises");
+    const content = await fs.readFile(filePath);
+    // The server sniffs PNG/JPEG/WebP magic bytes rather than trusting a
+    // content-type header, so the generic octet-stream binaryRequest is fine.
+    await this.binaryRequest<Json>("/auth/me/avatar", content, {});
+    this.clearAvatarCache();
+  }
+
+  async setGeneratedAvatar(avatarUrl: string): Promise<void> {
+    await this.request("/auth/me/avatar/generated", { method: "PUT", body: JSON.stringify({ avatarUrl }) });
+    this.clearAvatarCache();
+  }
+
+  async deleteAvatar(): Promise<void> {
+    await this.request("/auth/me/avatar", { method: "DELETE" });
+    this.clearAvatarCache();
+  }
+
+  async preferences(): Promise<UserPreferences> {
+    return this.request<UserPreferences>("/auth/preferences");
+  }
+
+  async updatePreferences(patch: Partial<UserPreferences> & { version: number }): Promise<UserPreferences> {
+    return this.request<UserPreferences>("/auth/preferences", { method: "PUT", body: JSON.stringify(patch) });
+  }
+
+  async billingProfile(): Promise<BillingProfile> {
+    return this.request<BillingProfile>("/billing/users/me/profile");
+  }
+
+  async updateBillingProfile(patch: Partial<BillingProfile>): Promise<BillingProfile> {
+    return this.request<BillingProfile>("/billing/users/me/profile", { method: "PUT", body: JSON.stringify(patch) });
+  }
+
+  // ── Settings: Members / invitations (onboarding-api) ─────────────────────
+
+  async members(organizationId: string): Promise<OrganizationMembership[]> {
+    return this.request<OrganizationMembership[]>(`/organizations/${organizationId}/members`);
+  }
+
+  async updateMemberRole(organizationId: string, userId: string, role: MemberRole): Promise<OrganizationMembership> {
+    return this.request<OrganizationMembership>(
+      `/organizations/${organizationId}/members/${userId}/role`,
+      { method: "PUT", body: JSON.stringify({ role }) },
+    );
+  }
+
+  async removeMember(organizationId: string, userId: string): Promise<void> {
+    await this.request(`/organizations/${organizationId}/members/${userId}`, { method: "DELETE" });
+  }
+
+  async invitations(organizationId: string): Promise<PendingInvitation[]> {
+    return this.request<PendingInvitation[]>(`/organizations/${organizationId}/invitations/pending`);
+  }
+
+  async createInvitation(organizationId: string, email: string, role: MemberRole): Promise<PendingInvitation> {
+    return this.request<PendingInvitation>(
+      `/organizations/${organizationId}/invitations`,
+      { method: "POST", body: JSON.stringify({ email, role }) },
+    );
+  }
+
+  async cancelInvitation(organizationId: string, invitationId: string): Promise<void> {
+    await this.request(`/organizations/${organizationId}/invitations/${invitationId}`, { method: "DELETE" });
+  }
+
+  // ── Settings: Audit logs (onboarding-api) ─────────────────────────────────
+
+  async auditLogs(
+    organizationId: string,
+    query: { page?: number; limit?: number; q?: string; action?: string; from?: string; to?: string } = {},
+  ): Promise<AuditLogPage> {
+    const params = new URLSearchParams();
+    if (query.page) params.set("page", String(query.page));
+    if (query.limit) params.set("limit", String(query.limit));
+    if (query.q) params.set("q", query.q);
+    if (query.action) params.set("action", query.action);
+    if (query.from) params.set("from", query.from);
+    if (query.to) params.set("to", query.to);
+    const qs = params.toString();
+    return this.request<AuditLogPage>(`/organizations/${organizationId}/audit-logs${qs ? `?${qs}` : ""}`);
   }
 
   /**
@@ -1124,6 +1315,293 @@ export class DesktopCloudClient {
     );
   }
 
+  // ── Graph Drift (fdrs-api) ─────────────────────────────────────────────
+
+  async graphVersions(applicationId: string, flowId: string): Promise<GraphVersion[]> {
+    return this.request<GraphVersion[]>(`/applications/${applicationId}/declared-flow/${flowId}/versions`);
+  }
+
+  async coverageHistory(applicationId: string, flowId: string): Promise<CoverageHistoryPoint[]> {
+    return this.request<CoverageHistoryPoint[]>(`/applications/${applicationId}/declared-flow/${flowId}/coverage-history`);
+  }
+
+  async graphVersionDiff(applicationId: string, flowId: string, from: string | number, to: string | number): Promise<GraphDiff> {
+    return this.request<GraphDiff>(
+      `/applications/${applicationId}/declared-flow/${flowId}/versions/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`,
+    );
+  }
+
+  // ── Reconciliation (fdrs-api) ─────────────────────────────────────────
+
+  async reconciliationReports(applicationId: string, environmentId?: string): Promise<ReconciliationReport[]> {
+    const qs = environmentId ? `?environmentId=${encodeURIComponent(environmentId)}` : "";
+    return this.request<ReconciliationReport[]>(`/applications/${applicationId}/reconciliation${qs}`);
+  }
+
+  async runReconciliation(applicationId: string, input: { environmentId?: string; expectedGraphId?: string; runId?: string } = {}): Promise<ReconciliationReport[]> {
+    return this.request<ReconciliationReport[]>(`/applications/${applicationId}/reconciliation/run`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  }
+
+  async exportReconciliation(applicationId: string, format: "json" | "csv", environmentId?: string): Promise<string> {
+    const params = new URLSearchParams({ format });
+    if (environmentId) params.set("environmentId", environmentId);
+    return this.request<string>(`/applications/${applicationId}/reconciliation/export?${params.toString()}`);
+  }
+
+  // ── Workflows / Missing States & Flows (report-engine) ────────────────
+
+  async workflows(applicationId: string): Promise<Workflow[]> {
+    return this.request<Workflow[]>(`/applications/${applicationId}/workflows`);
+  }
+
+  /** The combined latest-report payload: coverage, workflows, missingStates, missingFlows, reconciliation summary. */
+  async latestReport(applicationId: string): Promise<Json> {
+    return this.request<Json>(`/reports/${applicationId}/latest`);
+  }
+
+  // ── Endpoint Analysis (endpoint-engine) ────────────────────────────────
+
+  async endpointAnalysis(
+    applicationId: string,
+    options: { windowDays?: number; environmentId?: string; runId?: string } = {},
+  ): Promise<EndpointAnalysis> {
+    const params = new URLSearchParams();
+    if (options.windowDays) params.set("windowDays", String(options.windowDays));
+    if (options.environmentId) params.set("environmentId", options.environmentId);
+    if (options.runId) params.set("runId", options.runId);
+    const qs = params.toString();
+    return this.request<EndpointAnalysis>(`/endpoints/${applicationId}/analysis${qs ? `?${qs}` : ""}`);
+  }
+
+  // ── Behavioral Graph (report-engine) ────────────────────────────────────
+
+  async behavioralGraph(applicationId: string): Promise<BehavioralGraph> {
+    return this.request<BehavioralGraph>(`/applications/${applicationId}/graph`);
+  }
+
+  // ── Settings: MFA / password / paired devices (auth-api) ─────────────────
+
+  async mfaStatus(): Promise<MfaStatus> {
+    return this.request<MfaStatus>("/auth/mfa/status");
+  }
+
+  async mfaSetup(): Promise<MfaSetupResponse> {
+    return this.request<MfaSetupResponse>("/auth/mfa/setup", { method: "POST" });
+  }
+
+  async mfaEnable(token: string): Promise<BackupCodesResponse> {
+    return this.request<BackupCodesResponse>("/auth/mfa/enable", { method: "POST", body: JSON.stringify({ token }) });
+  }
+
+  async mfaSetupCancel(): Promise<void> {
+    await this.request("/auth/mfa/setup/cancel", { method: "POST" });
+  }
+
+  async mfaEmailSend(): Promise<void> {
+    await this.request("/auth/mfa/email/send", { method: "POST" });
+  }
+
+  async mfaEmailEnable(code: string): Promise<BackupCodesResponse> {
+    return this.request<BackupCodesResponse>("/auth/mfa/email/enable", { method: "POST", body: JSON.stringify({ code }) });
+  }
+
+  async mfaDisable(proof: { token?: string; password?: string }): Promise<void> {
+    await this.request("/auth/mfa/disable", { method: "POST", body: JSON.stringify(proof) });
+  }
+
+  async setPassword(input: { password: string; currentPassword?: string }): Promise<void> {
+    await this.request("/auth/password", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async pairedDevices(): Promise<PairedDevice[]> {
+    return this.request<PairedDevice[]>("/auth/desktop/devices");
+  }
+
+  async revokePairedDevice(deviceId: string): Promise<void> {
+    await this.request(`/auth/desktop/devices/${deviceId}`, { method: "DELETE" });
+  }
+
+  // ── Billing (billing-api) ───────────────────────────────────────────────
+
+  async billingPlans(): Promise<BillingPlanCatalog> {
+    return this.request<BillingPlanCatalog>("/billing/plans");
+  }
+
+  async billingSubscription(organizationId: string): Promise<BillingSubscription> {
+    return this.request<BillingSubscription>(`/billing/organizations/${organizationId}/subscription`);
+  }
+
+  async billingInvoices(organizationId: string): Promise<BillingInvoice[]> {
+    return this.request<BillingInvoice[]>(`/billing/organizations/${organizationId}/invoices`);
+  }
+
+  async trialEligibility(): Promise<{ eligible: boolean }> {
+    return this.request<{ eligible: boolean }>("/billing/trial/eligibility");
+  }
+
+  async startTrial(organizationId: string): Promise<CheckoutResponse | { status: string }> {
+    return this.request("/billing/trial/start", { method: "POST", body: JSON.stringify({ organizationId }) });
+  }
+
+  async checkout(input: {
+    organizationId: string;
+    planType: string;
+    billingInterval: "MONTHLY" | "ANNUAL";
+    provider?: string;
+    successUrl: string;
+    cancelUrl: string;
+  }): Promise<CheckoutResponse> {
+    return this.request<CheckoutResponse>("/billing/checkout", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async checkoutStatus(invoiceId: string): Promise<CheckoutStatus> {
+    return this.request<CheckoutStatus>(`/billing/checkouts/${invoiceId}/status`);
+  }
+
+  async previewSubscriptionChange(input: { organizationId: string; planType: string; billingInterval: "MONTHLY" | "ANNUAL" }): Promise<SubscriptionChangePreview> {
+    return this.request<SubscriptionChangePreview>("/billing/subscriptions/changes/preview", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async applySubscriptionChange(input: { organizationId: string; previewId: string; effectiveMode: "IMMEDIATE" | "NEXT_RENEWAL"; idempotencyKey: string }): Promise<Json> {
+    return this.request<Json>("/billing/subscriptions/changes", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  async cancelSubscription(organizationId: string): Promise<void> {
+    await this.request("/billing/subscriptions/cancel", { method: "POST", body: JSON.stringify({ organizationId }) });
+  }
+
+  async resumeSubscription(organizationId: string): Promise<void> {
+    await this.request("/billing/subscriptions/resume", { method: "POST", body: JSON.stringify({ organizationId }) });
+  }
+
+  async paymentMethodSession(organizationId: string, successUrl: string, cancelUrl: string): Promise<CheckoutResponse> {
+    return this.request<CheckoutResponse>("/billing/payment-method/session", {
+      method: "POST",
+      body: JSON.stringify({ organizationId, successUrl, cancelUrl }),
+    });
+  }
+
+  // ── Admin governance suite (onboarding-api / background-workers, gateway-gated) ──
+
+  async adminAiUsage(days = 30): Promise<AiUsageSummary> {
+    return this.request<AiUsageSummary>(`/admin/ai-usage?days=${days}`);
+  }
+
+  async adminAiUsageDaily(days = 30): Promise<Json[]> {
+    return this.request<Json[]>(`/admin/ai-usage/daily?days=${days}`);
+  }
+
+  async adminAiUsageBackfill(days: number): Promise<void> {
+    await this.request(`/admin/ai-usage/backfill?days=${Math.min(90, days)}`, { method: "POST" });
+  }
+
+  async adminRulesets(status?: string): Promise<Ruleset[]> {
+    const qs = status ? `?status=${encodeURIComponent(status)}` : "";
+    return this.request<Ruleset[]>(`/admin/rulesets${qs}`);
+  }
+
+  async adminPromoteRuleset(id: string): Promise<Ruleset> {
+    return this.request<Ruleset>(`/admin/rulesets/${id}/promote`, { method: "POST" });
+  }
+
+  async adminRuleCandidates(input: { status?: string; cursor?: string; limit?: number } = {}): Promise<{ data: RuleCandidate[]; nextCursor: string | null }> {
+    const params = new URLSearchParams();
+    if (input.status) params.set("status", input.status);
+    if (input.cursor) params.set("cursor", input.cursor);
+    if (input.limit) params.set("limit", String(input.limit));
+    const qs = params.toString();
+    return this.request(`/admin/rule-candidates${qs ? `?${qs}` : ""}`);
+  }
+
+  async adminApproveCandidate(id: string): Promise<RuleCandidate> {
+    return this.request<RuleCandidate>(`/admin/rule-candidates/${id}/approve`, { method: "POST" });
+  }
+
+  async adminRejectCandidate(id: string): Promise<RuleCandidate> {
+    return this.request<RuleCandidate>(`/admin/rule-candidates/${id}/reject`, { method: "POST" });
+  }
+
+  async adminAuditLogs(query: { page?: number; limit?: number; q?: string; action?: string } = {}): Promise<AuditLogPage> {
+    const params = new URLSearchParams();
+    if (query.page) params.set("page", String(query.page));
+    if (query.limit) params.set("limit", String(query.limit));
+    if (query.q) params.set("q", query.q);
+    if (query.action) params.set("action", query.action);
+    const qs = params.toString();
+    return this.request<AuditLogPage>(`/admin/audit-logs${qs ? `?${qs}` : ""}`);
+  }
+
+  async adminQueueStatus(): Promise<QueueStatus> {
+    return this.request<QueueStatus>("/admin/queues/status");
+  }
+
+  // ── Sessions / Session Replay (report-engine) ───────────────────────────
+
+  async sessions(applicationId: string, filters: Record<string, unknown> = {}): Promise<Json> {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) {
+      if (value === undefined || value === null || value === "") continue;
+      if (Array.isArray(value)) value.forEach((item) => params.append(key, String(item)));
+      else params.set(key, String(value));
+    }
+    const qs = params.toString();
+    return this.request<Json>(`/applications/${applicationId}/sessions${qs ? `?${qs}` : ""}`);
+  }
+
+  async endUsers(applicationId: string): Promise<Json> {
+    return this.request<Json>(`/applications/${applicationId}/end-users`);
+  }
+
+  async sessionTimeline(sessionId: string): Promise<Json> {
+    return this.request<Json>(`/sessions/${sessionId}/replay`);
+  }
+
+  async replayManifest(sessionId: string): Promise<Json> {
+    return this.request<Json>(`/sessions/${sessionId}/replay/manifest`);
+  }
+
+  /**
+   * Fetches every chunk in a session's replay manifest, gunzips them (Node's
+   * built-in zlib — simpler than juggling DecompressionStream across process
+   * boundaries), and concatenates the newline-delimited rrweb events into one
+   * array. Runs entirely in the main process so the untrusted recorded events
+   * never pass through the authenticated renderer at all — only the finished
+   * events array crosses into the sandboxed replay window.
+   */
+  async replayEvents(sessionId: string): Promise<unknown[]> {
+    const zlib = await import("node:zlib");
+    const manifest = await this.replayManifest(sessionId) as {
+      available: boolean;
+      chunks: Array<{ seq: number; url: string; isPresigned: boolean; encoding: string }>;
+    };
+    if (!manifest.available || !manifest.chunks?.length) return [];
+    const current = loadDesktopSession();
+    if (!current) throw new Error("AUTHENTICATION_REQUIRED");
+    const sorted = [...manifest.chunks].sort((a, b) => a.seq - b.seq);
+    const events: unknown[] = [];
+    for (const chunk of sorted) {
+      const url = chunk.isPresigned ? chunk.url : `${API_URL}${chunk.url}`;
+      const response = await cloudFetch(url, {
+        headers: chunk.isPresigned ? {} : { authorization: `Bearer ${current.accessToken}` },
+      });
+      if (!response.ok) continue;
+      const raw = Buffer.from(await response.arrayBuffer());
+      const text = chunk.encoding === "gzip" ? zlib.gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+      for (const line of text.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+          events.push(JSON.parse(line));
+        } catch {
+          /* skip malformed line */
+        }
+      }
+    }
+    return events;
+  }
+
   /**
    * The published graph snapshot a run reconciles against. Read by version
    * rather than through the canonical flow endpoint, because the draft graph
@@ -1182,7 +1660,10 @@ export class DesktopCloudClient {
   ): Promise<Json> {
     return this.request(
       `/flow-initializations/${initializationId}/mapping-candidates`,
-      { method: "POST", body: JSON.stringify(input) },
+      {
+        method: "POST", body: JSON.stringify(input),
+        signal: AbortSignal.timeout(FLOW_MAPPING_RESOLUTION_TIMEOUT_MS),
+      },
     );
   }
 
@@ -1202,7 +1683,10 @@ export class DesktopCloudClient {
   async retryFlowMappingResolution(initializationId: string): Promise<Json> {
     return this.request(
       `/flow-initializations/${initializationId}/resolve-retry`,
-      { method: "POST", body: JSON.stringify({}) },
+      {
+        method: "POST", body: JSON.stringify({}),
+        signal: AbortSignal.timeout(FLOW_MAPPING_RESOLUTION_TIMEOUT_MS),
+      },
     );
   }
 

@@ -5,6 +5,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import test from 'node:test';
 import type { CodebaseAnalysis, CodeEntity } from '@tellann/desktop-contracts';
+import { assertCanonicalAnalysis } from '@tellann/code-intelligence-contracts';
 import {
   analyzeCodebase, answerFromAnalysis, blastRadius, blastRadiusInAnalysis,
   buildInventory, buildSanitizedSourceArchive, canonicalRoute, compareAnalyses, describeEntity,
@@ -473,6 +474,8 @@ test('counts coverage in files and names unsupported languages', () => {
 test('is deterministic for the same working tree', () => {
   const { root, analysis } = analyze();
   const second = analyzeCodebase(root, WORKSPACE, FINGERPRINT).analysis;
+  assert.doesNotThrow(() => assertCanonicalAnalysis(analysis));
+  assert.doesNotThrow(() => assertCanonicalAnalysis(second));
   assert.equal(analysis.graphVersion, second.graphVersion);
   assert.equal(analysis.contentHash, second.contentHash);
   assert.equal(analysis.entities.length, second.entities.length);

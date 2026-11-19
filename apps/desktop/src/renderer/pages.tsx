@@ -101,6 +101,7 @@ import {
   useSearchParams,
 } from "react-router-dom";
 import { EntitlementModal } from "./components/entitlement-modal";
+import { openDashboardWebUrl } from "./dashboard-url";
 import {
   describeQaRunStartFailure,
   QaRunStartErrorModal,
@@ -281,7 +282,7 @@ export function Page({
   );
 }
 
-function EmptyState({
+export function EmptyState({
   icon,
   title,
   description,
@@ -305,7 +306,7 @@ function EmptyState({
   );
 }
 
-function Status({ children }: { children: ReactNode }) {
+export function Status({ children }: { children: ReactNode }) {
   const text = typeof children === "string" ? children : null;
   return (
     <span className="status-pill pt-0.75!" data-tone={text ? statusTone(text) : "neutral"}>
@@ -784,7 +785,7 @@ export function NewApplicationPage() {
   );
 }
 
-function useProject() {
+export function useProject() {
   const { projectId } = useParams();
   const desktop = useDesktop();
   return {
@@ -2354,12 +2355,14 @@ export function EnvironmentsPage() {
 }
 
 export function ActivityPage() {
+  const { application } = useProject();
   return (
     <GuardedFeaturePage
       title="Application activity"
       description="Workspace scans, runs, reports, and local synchronization activity."
-      phase="Cloud audit expansion is scheduled for enterprise hardening."
-      fallback="QA run and report history are available in their respective sections."
+      phase="Activity history is managed in the web companion"
+      fallback={`Open the cloud activity feed${application?.name ? ` for ${application.name}` : ""}. Local run and report history remains available in the desktop sections.`}
+      webPath="/"
     />
   );
 }
@@ -6322,8 +6325,9 @@ export function IntentDetailPage() {
       <GuardedFeaturePage
         title="Intent versions"
         description="Accepted graph version history."
-        phase="Select an accepted graph from Intent."
-        fallback="Version comparison remains cloud-authoritative."
+        phase="Version comparison is managed in the web companion"
+        fallback="Open Graph Drift to compare accepted, persisted intent versions. Select an intent draft here to continue editing locally."
+        webPath="/graph-drift"
       />
     );
   if (loading) return <LoadingState />;
@@ -7479,7 +7483,17 @@ function FlowReviewPanel({
   // A run where every call failed and a run where the model considered each
   // checkpoint and was unsure both end as "choose one yourself". They ask
   // completely different things of the reader, so they no longer look alike.
-  const resolutionFailed = Boolean(ai.failed);
+  //
+  // A batch or two not finishing is routine, not a failure — this screen's
+  // own retry button exists because of it. Once the run is also moving
+  // checkpoints forward (or has already placed everything that remains), it
+  // reads as progress rather than an error: same banner, calmer tone, no
+  // triangle. It only earns the alarming treatment when nothing landed —
+  // every batch failed and there is still work left undone.
+  const totalBatches = Number(ai.batches ?? 0);
+  const failedBatches = Number(ai.batchesFailed ?? 0);
+  const resolutionFailed = Boolean(ai.failed) && remaining > 0;
+  const resolutionBlocked = resolutionFailed && totalBatches > 0 && failedBatches >= totalBatches;
 
   return (
     <section className="content-card flow-review-panel">
@@ -7546,22 +7560,31 @@ function FlowReviewPanel({
         </div>
       ) : null}
 
-      <p className="flow-review-findings-note">
+      {/* <p className="flow-review-findings-note">
         {remaining
           ? `${remaining} of ${Number(progress.totalCheckpoints ?? checkpoints.length)} checkpoints still need a location. Choose one for each, or use manual initialization and place them yourself.`
           : "Every declared state and transition has a location in your code."}
-      </p>
+      </p> */}
 
       {resolutionFailed ? (
-        <div className="infobar" data-tone="warning" role="status">
-          <TriangleAlert size={16} />
+        <div className="infobar" data-tone={resolutionBlocked ? "warning" : "info"} role="status">
+          {resolutionBlocked ? <TriangleAlert size={16} /> : <Info size={16} />}
           <span>
-            {Number(ai.batchesFailed ?? 0) === Number(ai.batches ?? 0)
-              ? "Automatic placement could not be completed"
-              : `Automatic placement finished for some checkpoints but not others (${Number(ai.batchesFailed ?? 0)} of ${Number(ai.batches ?? 0)} batches failed)`}
-            {ai.failureReasonSafe ? ` — ${String(ai.failureReasonSafe)}.` : "."} The
-            evidence below was still gathered, so you can retry the placement or
-            choose the locations yourself.
+            {resolutionBlocked ? (
+              <>
+                Automatic placement could not be completed
+                {ai.failureReasonSafe ? ` — ${String(ai.failureReasonSafe)}.` : "."} The
+                evidence below was still gathered, so you can retry the placement or
+                choose the locations yourself.
+              </>
+            ) : (
+              <>
+                {Number(progress.resolvedCount ?? 0)} of{" "}
+                {Number(progress.totalCheckpoints ?? checkpoints.length)} checkpoints
+                were placed automatically. Retry to try the remaining {remaining}, or
+                choose them yourself below.
+              </>
+            )}
           </span>
           {onRetryResolution ? (
             <button className="button" type="button" disabled={busy} onClick={onRetryResolution}>
@@ -14359,7 +14382,7 @@ export function RunEvidencePanel({
 }
 
 export function LiveRunPage() {
-  const { projectId } = useParams();
+  const { projectId, runId } = useParams();
   const navigate = useNavigate();
   const {
     activeRun: run,
@@ -14658,8 +14681,11 @@ export function LiveRunPage() {
   if (!run) {
     // The window between an automated run starting and its browser opening:
     // there is a status to show, just no GuidedRunState yet to drive the rest
-    // of this page from.
-    if (automatedStatus && automatedStatus.applicationId === projectId && isAutomatedRunActive(automatedStatus)) {
+    // of this page from. Matched by runId, not just by whether a run is still
+    // active — a run that fails before a GuidedRunState exists (e.g. the
+    // launch command never came up) goes straight to FINISHED, and its
+    // outcome still belongs on this page, not behind the generic empty state.
+    if (automatedStatus && automatedStatus.applicationId === projectId && automatedStatus.runId === runId) {
       return <AutomatedPreparingView status={automatedStatus} />;
     }
     return (
@@ -17283,6 +17309,7 @@ export function ReportAuxPage({ kind }: { kind: "compare" | "export" }) {
           : "Existing web exports remain the current canonical export path."
       }
       fallback="Open the report in the web companion for the currently supported workflow."
+      webPath="/reports"
     />
   );
 }
@@ -17292,15 +17319,17 @@ export function GuardedFeaturePage({
   description,
   phase,
   fallback,
+  webPath,
 }: {
   title: string;
   description: string;
   phase: string;
   fallback: string;
+  webPath?: string;
 }) {
   return (
     <Page title={title} description={description}>
-      <GuardedFeatureContent phase={phase} fallback={fallback} />
+      <GuardedFeatureContent phase={phase} fallback={fallback} webPath={webPath} />
     </Page>
   );
 }
@@ -17308,10 +17337,14 @@ export function GuardedFeaturePage({
 function GuardedFeatureContent({
   phase,
   fallback,
+  webPath,
 }: {
   phase: string;
   fallback: string;
+  webPath?: string;
 }) {
+  const openWebCompanion = () => openDashboardWebUrl(webPath ?? "/");
+
   return (
     <section className="guarded-card">
       <ShieldCheck size={32} />
@@ -17319,6 +17352,11 @@ function GuardedFeatureContent({
         <Status>Staged capability</Status>
         <h2>{phase}</h2>
         <p>{fallback}</p>
+        {webPath ? (
+          <button className="button primary" type="button" onClick={openWebCompanion}>
+            Open web companion <ExternalLink size={15} />
+          </button>
+        ) : null}
       </div>
     </section>
   );

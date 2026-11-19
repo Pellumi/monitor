@@ -244,6 +244,31 @@ test('settling does not stall on a state that never reports through the SDK', as
   });
 });
 
+test('settling waits for a visible busy state before accepting a delayed redirect', async () => {
+  await withPage(async (page, app) => {
+    await page.goto(`${app.baseUrl}/courses/7`);
+    await page.evaluate(() => {
+      const busy = document.createElement('div');
+      busy.setAttribute('role', 'status');
+      busy.textContent = 'Signing in';
+      document.body.appendChild(busy);
+      window.setTimeout(() => {
+        busy.remove();
+        history.pushState({}, '', '/admin');
+        (window as unknown as { __sdk: string[] }).__sdk.push('dashboard');
+      }, 2_000);
+    });
+
+    const started = Date.now();
+    const snapshot = await driverFor(page, { sdkGraceMs: 300, settleTimeoutMs: 5_000 }).settle('dashboard');
+
+    assert.equal(snapshot.path, '/admin');
+    assert.ok(snapshot.sdkStates.includes('dashboard'));
+    assert.equal(snapshot.page?.busyIndicator, true, 'the evidence remembers that progress was shown');
+    assert.ok(Date.now() - started >= 1_800, 'the stale page was not returned while it still said it was busy');
+  });
+});
+
 test('a ref survives the application re-rendering its DOM between snapshot and click', async () => {
   await withPage(async (page, app) => {
     await page.goto(`${app.baseUrl}/courses/7`);

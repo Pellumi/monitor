@@ -18,6 +18,14 @@ export type FlowMappingCandidate = {
   evidenceIds: string[];
   rationale: string;
   excerpt?: string | null;
+  /**
+   * The candidate's own declaration line, when retrieval found the file still
+   * has one there. Not an AI excerpt — it is the same line implied by
+   * file/symbol/startLine — so it is present whether or not excerpt sharing
+   * was consented to. It is what makes a structural placement (see
+   * `STRUCTURAL_PLACEMENT_KINDS`) resolvable from static analysis alone.
+   */
+  anchorText?: string | null;
 };
 
 export type FlowMappingResolutionInput = {
@@ -31,6 +39,14 @@ export type FlowMappingResolutionInput = {
     fromLabel?: string | null;
     toLabel?: string | null;
     candidates: FlowMappingCandidate[];
+    /**
+     * What retrieval already decided about this checkpoint, from ranking
+     * alone — set when the submitting client ran `retrieveFlowMappings` and
+     * forwarded its per-checkpoint status. `'RESOLVED'` is the only value
+     * this module acts on (see `structuralResolution`); anything else is
+     * treated the same as if it were absent.
+     */
+    retrievalStatus?: 'RESOLVED' | 'AMBIGUOUS' | 'UNRESOLVED' | 'UNSUPPORTED' | null;
   }>;
 };
 
@@ -45,9 +61,16 @@ const ModelResponse = z.object({
     candidateId: z.string(),
     status: z.enum(['RESOLVED', 'AMBIGUOUS', 'UNRESOLVED', 'UNSUPPORTED']),
     placementKind: PlacementKind,
-    anchorText: z.string().min(1).max(500),
-    startLine: z.number().int().positive().nullable(),
-    endLine: z.number().int().positive().nullable(),
+    // An exact anchor only means something for a RESOLVED verdict — there is
+    // nothing to point at when the model itself is saying it isn't sure. These
+    // three used to be required (and startLine/endLine positive) on every
+    // mapping regardless of status, so an honest AMBIGUOUS/UNRESOLVED/
+    // UNSUPPORTED answer — which correctly left them empty — failed schema
+    // validation and took its whole batch down with it; `acceptMappings`
+    // below is what actually requires them, and only when status is RESOLVED.
+    anchorText: z.string().max(500).nullable().optional(),
+    startLine: z.number().int().nullable().optional(),
+    endLine: z.number().int().nullable().optional(),
     confidence: z.number().min(0).max(1),
     rationale: z.string().min(1).max(1_000),
     evidenceIds: z.array(z.string()).max(20),
@@ -75,19 +98,26 @@ export type ResolvedFlowMapping = {
 };
 
 /**
- * What retrieval alone can conclude, with no model and no source in hand.
+ * What retrieval alone can conclude about a checkpoint whose placement needs
+ * semantic reading, with no model and no source in hand.
  *
- * It deliberately never resolves. Ranking can say which file a checkpoint is
- * about; it cannot say which line inside that file is the right place to insert
- * a call, and a resolved mapping is a promise that it can — the contract and the
- * instrumentation adapter both require an exact anchor and its hash before
- * anything is written. Claiming RESOLVED here would produce a mapping that is
- * rejected several steps later, with no way to say why.
+ * For most placement kinds it deliberately never resolves. Ranking can say
+ * which file a checkpoint is about; it cannot say which statement inside that
+ * file is the right place to insert a call, and a resolved mapping is a
+ * promise that it can — the contract and the instrumentation adapter both
+ * require an exact anchor and its hash before anything is written. Claiming
+ * RESOLVED here would produce a mapping that is rejected several steps later,
+ * with no way to say why.
  *
  * So a shortlist becomes AMBIGUOUS and goes to the user, who picks a candidate
  * and supplies the anchor with it. That is the same outcome the plan asks for
  * when consent is declined or every provider fails: keep the evidence, keep the
  * choice, and never quietly downgrade a guess into an edit.
+ *
+ * This is the fallback for whatever `structuralResolution` below did not
+ * already resolve — a checkpoint whose best placement is `BRANCH_ENTRY` /
+ * `BEFORE_STATEMENT` / `AFTER_STATEMENT`, or one retrieval itself was not
+ * confident about.
  */
 function deterministic(checkpoint: FlowMappingResolutionInput['checkpoints'][number]): ResolvedFlowMapping {
   const [best] = checkpoint.candidates;
@@ -108,6 +138,65 @@ function deterministic(checkpoint: FlowMappingResolutionInput['checkpoints'][num
       ? 'Ranked from codebase analysis alone — choose the exact place this happens.'
       : 'No codebase-analysis candidate matched this checkpoint.',
     evidenceIds: [],
+    alternatives: checkpoint.candidates,
+    userConfirmed: false,
+    userOverridden: false,
+  };
+}
+
+/**
+ * Placement kinds where "which statement" is not a question.
+ *
+ * `applySemanticCheckpoint` in the instrumentation adapter inserts a
+ * `COMPONENT_MOUNT`/`FUNCTION_ENTRY`/`CALLBACK_ENTRY`/`ROUTE_HANDLER_ENTRY`
+ * checkpoint at the top of the resolved component or function body — it never
+ * reads the anchor text to decide where inside the body to write. The anchor
+ * is only load-bearing for `BRANCH_ENTRY`/`BEFORE_STATEMENT`/`AFTER_STATEMENT`,
+ * which point at one statement among several and so do need either a model or
+ * a person to read the body and choose. For these kinds, once retrieval has
+ * named the right file and symbol with confidence, there is nothing left that
+ * only a model or a person could add.
+ */
+const STRUCTURAL_PLACEMENT_KINDS = new Set(['COMPONENT_MOUNT', 'FUNCTION_ENTRY', 'CALLBACK_ENTRY', 'ROUTE_HANDLER_ENTRY']);
+
+/**
+ * Resolve a checkpoint from static analysis alone, with no model call.
+ *
+ * Only when retrieval itself was confident (`retrievalStatus === 'RESOLVED'`,
+ * the same score/margin bar `retrieveFlowMappings` already applied before this
+ * module ever saw the checkpoint) and the top candidate's best supported
+ * placement is structural (see `STRUCTURAL_PLACEMENT_KINDS`) and carries a
+ * real anchor line. Anything short of that — a lower-confidence or tied
+ * ranking, a placement that needs a statement chosen inside the body, a
+ * candidate with no anchor line because the file could not be read — falls
+ * through to the model/manual path unchanged; this function only ever adds a
+ * mapping, never withholds one that would otherwise have been attempted.
+ */
+function structuralResolution(checkpoint: FlowMappingResolutionInput['checkpoints'][number]): ResolvedFlowMapping | null {
+  if (checkpoint.retrievalStatus !== 'RESOLVED') return null;
+  const [top] = checkpoint.candidates;
+  if (!top || !top.file) return null;
+  const placementKind = top.placementKinds.find((kind) => STRUCTURAL_PLACEMENT_KINDS.has(kind));
+  if (!placementKind) return null;
+  const anchorText = top.anchorText?.trim();
+  if (!anchorText) return null;
+  const startLine = top.startLine ?? 1;
+  const endLine = Math.max(startLine, top.endLine ?? startLine);
+  return {
+    checkpointId: checkpoint.checkpointId,
+    status: 'RESOLVED',
+    entityId: top.entityId,
+    candidateId: top.id,
+    file: top.file,
+    symbol: top.symbol,
+    startLine,
+    endLine,
+    placementKind: placementKind as z.infer<typeof PlacementKind>,
+    anchorText,
+    anchorHash: crypto.createHash('sha256').update(`${top.file}\0${top.symbol ?? ''}\0${placementKind}\0${anchorText}`).digest('hex'),
+    confidence: top.confidence,
+    rationale: 'Static analysis found exactly one place in your code where this happens.',
+    evidenceIds: top.evidenceIds,
     alternatives: checkpoint.candidates,
     userConfirmed: false,
     userOverridden: false,
@@ -239,7 +328,22 @@ function promptFor(
     'Use only checkpoint, candidate, evidence, file, symbol, and line identifiers present below.',
     'Select a placementKind supported by that candidate. Do not write a patch.',
     'Use RESOLVED only when the evidence identifies one safe semantic point; otherwise use AMBIGUOUS, UNRESOLVED, or UNSUPPORTED.',
+    // Naming the fields was not enough on its own — a RESOLVED answer kept
+    // arriving with every one of these left out, which is indistinguishable
+    // from a guess and is rejected downstream for exactly that reason. Spelling
+    // out what each one has to be, and where it comes from, is what actually
+    // changed that.
+    'A RESOLVED mapping must include anchorText, startLine, endLine and at least one evidenceId, all copied verbatim from that candidate — never invented. '
+      + 'anchorText is one exact line copied from that candidate\'s excerpt (the line your checkpoint happens at); startLine/endLine are that line\'s real number(s) within the excerpt; '
+      + 'each evidenceId must be copied from that candidate\'s own evidenceIds list. '
+      + 'If you cannot supply all four from what that candidate actually shows, the answer is not RESOLVED — use AMBIGUOUS, UNRESOLVED, or UNSUPPORTED instead, with anchorText/startLine/endLine left out and evidenceIds as [].',
     'Answer for every checkpoint listed below, and for no other.',
+    // Every provider in the chain is called with response_format: json_object,
+    // an OpenAI-compatible constraint both Gemini's and DeepSeek's endpoints
+    // enforce by rejecting the request with 400 unless the prompt itself says
+    // "json" somewhere. Without this line every batch failed that way — not on
+    // a timeout, whatever the generic failure message said.
+    'Respond with a single JSON object matching the schema implied below — one "mappings" entry per checkpoint.',
     JSON.stringify(safe),
   ].join('\n\n');
 }
@@ -295,13 +399,20 @@ function acceptMappings(
     const candidate = checkpoint?.candidates.find((option) => option.id === item.candidateId);
     if (!checkpoint || !candidate) continue;
     if (!candidate.placementKinds.includes(item.placementKind)) continue;
-    if (item.status === 'RESOLVED' && item.evidenceIds.length === 0) continue;
-    if (item.startLine !== null && candidate.startLine !== null && item.startLine < candidate.startLine) continue;
-    if (item.endLine !== null && candidate.endLine !== null && item.endLine > candidate.endLine) continue;
-    if (item.evidenceIds.some((id) => !candidate.evidenceIds.includes(id))) continue;
     const resolved = item.status === 'RESOLVED';
+    // These only mean something for a RESOLVED verdict — the schema lets an
+    // honest AMBIGUOUS/UNRESOLVED/UNSUPPORTED answer leave them out, so they
+    // are read as present-or-not here rather than assumed.
+    const anchorText = item.anchorText?.trim() || null;
+    const startLine = item.startLine ?? null;
+    const endLine = item.endLine ?? null;
+    if (resolved && (!anchorText || !startLine || !endLine || startLine < 1 || endLine < startLine)) continue;
+    if (resolved && item.evidenceIds.length === 0) continue;
+    if (startLine !== null && candidate.startLine !== null && startLine < candidate.startLine) continue;
+    if (endLine !== null && candidate.endLine !== null && endLine > candidate.endLine) continue;
+    if (item.evidenceIds.some((id) => !candidate.evidenceIds.includes(id))) continue;
     const anchorHash = resolved
-      ? crypto.createHash('sha256').update(`${candidate.file}\0${candidate.symbol ?? ''}\0${item.placementKind}\0${item.anchorText}`).digest('hex')
+      ? crypto.createHash('sha256').update(`${candidate.file}\0${candidate.symbol ?? ''}\0${item.placementKind}\0${anchorText}`).digest('hex')
       : null;
     accepted.set(item.checkpointId, {
       checkpointId: item.checkpointId,
@@ -310,10 +421,10 @@ function acceptMappings(
       candidateId: resolved ? candidate.id : null,
       file: resolved ? candidate.file : null,
       symbol: resolved ? candidate.symbol : null,
-      startLine: resolved ? item.startLine : null,
-      endLine: resolved ? item.endLine : null,
+      startLine: resolved ? startLine : null,
+      endLine: resolved ? endLine : null,
       placementKind: resolved ? item.placementKind : null,
-      anchorText: resolved ? item.anchorText : null,
+      anchorText: resolved ? anchorText : null,
       anchorHash,
       confidence: resolved ? Math.min(item.confidence, candidate.confidence) : 0,
       rationale: item.rationale,
@@ -359,20 +470,32 @@ async function resolveBatch(
   );
   const maxOutputTokens = Math.max(MIN_OUTPUT_TOKENS, batch.length * OUTPUT_TOKENS_PER_MAPPING);
   let lastError: unknown = null;
+  // A schema-valid reply that cites no real evidence for any checkpoint is
+  // worth exactly as much as no reply at all — but it used to be treated as
+  // this batch's one shot, so a weak model confidently answering "RESOLVED"
+  // with nothing to back it up permanently shut the stronger fallback models
+  // in the chain out of ever being asked. Kept so the batch can still report
+  // which provider actually answered if every one of them comes back empty.
+  let emptyButAnswered: { provider: string; model: string; providerIndex: number; repaired: boolean } | null = null;
 
   for (let index = 0; index < providers.length; index += 1) {
     const provider = providers[index];
     try {
       const generated = await provider.generateStructured({ prompt, schema: ModelResponse, timeoutMs, maxOutputTokens });
-      return {
-        accepted: acceptMappings(batch, generated.data.mappings),
-        provider: provider.name, model: provider.model, providerIndex: index,
-        repaired: generated.repaired, errorSafe: null,
-      };
+      const accepted = acceptMappings(batch, generated.data.mappings);
+      if (accepted.size > 0) {
+        return {
+          accepted, provider: provider.name, model: provider.model, providerIndex: index,
+          repaired: generated.repaired, errorSafe: null,
+        };
+      }
+      emptyButAnswered = { provider: provider.name, model: provider.model, providerIndex: index, repaired: generated.repaired };
     } catch (error) {
       lastError = error;
     }
   }
+
+  if (emptyButAnswered) return { accepted: new Map(), ...emptyButAnswered, errorSafe: null };
 
   if (lastError) {
     const detail = lastError instanceof Error ? lastError.message : String(lastError);
@@ -407,14 +530,21 @@ export async function resolveFlowCheckpointMappings(
     .update(promptFor(input.flowName, input.analysis, input.checkpoints)).digest('hex');
 
   const cached = new Map<string, ResolvedFlowMapping>();
+  const structural = new Map<string, ResolvedFlowMapping>();
   const pending: FlowMappingResolutionInput['checkpoints'] = [];
   for (const checkpoint of input.checkpoints) {
     const hit = cache?.get(resolutionCacheKey(retrievalVersion, input.analysis.contentHash, checkpoint));
     // The candidates are equivalent by construction — their ids are part of the
     // key — but the objects are this run's, and the alternatives the user is
     // shown have to be the ones this run built.
-    if (hit) cached.set(checkpoint.checkpointId, { ...hit, alternatives: checkpoint.candidates });
-    else pending.push(checkpoint);
+    if (hit) { cached.set(checkpoint.checkpointId, { ...hit, alternatives: checkpoint.candidates }); continue; }
+    // A prior run's AI answer, when there is one, is more specific than this
+    // structural shortcut can ever be (it may have placed a checkpoint mid-body
+    // that this would only ever anchor at the top), so the cache is checked
+    // first and a structural resolution never overrides it.
+    const resolvedStructurally = structuralResolution(checkpoint);
+    if (resolvedStructurally) { structural.set(checkpoint.checkpointId, resolvedStructurally); continue; }
+    pending.push(checkpoint);
   }
 
   const batches = providers.length ? chunked(pending, Math.max(1, options.batchSize ?? DEFAULT_BATCH_SIZE)) : [];
@@ -447,6 +577,7 @@ export async function resolveFlowCheckpointMappings(
     mappings: input.checkpoints.map((checkpoint) =>
       accepted.get(checkpoint.checkpointId)
       ?? cached.get(checkpoint.checkpointId)
+      ?? structural.get(checkpoint.checkpointId)
       ?? fallbacks.get(checkpoint.checkpointId)!),
     provenance: {
       engine: (succeeded.length || cached.size ? 'HYBRID_AI' : 'GRAPH_ONLY') as 'HYBRID_AI' | 'GRAPH_ONLY',

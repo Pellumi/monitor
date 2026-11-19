@@ -249,6 +249,20 @@ export class PageAutomationDriver implements Pick<AutomationPorts, 'snapshot' | 
         await this.page.waitForLoadState('domcontentloaded', { timeout: remaining() });
         await this.waitForQuiet(remaining());
         await this.waitForRequests(remaining());
+        // DOM quiet and finished requests are not enough when the application is explicitly
+        // telling the person it is still working. In particular, a credential submit can leave
+        // the login DOM untouched while the server prepares a delayed redirect. Returning that
+        // page makes the engine retry the sign-in transition against a snapshot that is already
+        // obsolete. Keep polling until the indicator clears (or the settle deadline expires),
+        // while remembering that the page showed progress for the resulting evidence.
+        if (this.options.measure) {
+          const busy = await this.readBusyIndicator();
+          this.busyWhileSettling = this.busyWhileSettling || busy;
+          if (busy) {
+            await this.page.waitForTimeout(Math.min(100, remaining()));
+            continue;
+          }
+        }
         if (expectedStateKey === null) break;
         // The application says which state it is in. Give it a moment to say so, but do not stall on states
         // that never report: the run recognises them from the route and elements instead.

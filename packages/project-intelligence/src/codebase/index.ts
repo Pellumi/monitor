@@ -3,7 +3,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { execFileSync } from 'node:child_process';
 import ts from 'typescript';
-import type { CodebaseAnalysis } from '@tellann/desktop-contracts';
+import { computeAnalysisGraphVersion, type CodebaseAnalysis } from '@tellann/code-intelligence-contracts';
 import { ANALYZER_VERSIONS, CONFIDENCE, digest, GraphBuilder, slash, stableId } from './core';
 import { buildInventory, planArchive, packageOwnerIndex } from './inventory';
 import type { Inventory } from './inventory';
@@ -30,7 +30,7 @@ export { analyzePythonSources, pythonModuleName } from './python';
 export { blastRadius };
 
 /** Bumped whenever a change would make cached fragments wrong. */
-export const CODEBASE_ANALYZER_VERSION = '2.2.0';
+export const CODEBASE_ANALYZER_VERSION = '2.3.0';
 
 export type AnalysisProgress = (
   status: CodebaseAnalysis['status'],
@@ -350,7 +350,9 @@ export function analyzeCodebase(
     id: stableId('analysis', `${repositoryFingerprint}:${contentHash}:${CODEBASE_ANALYZER_VERSION}`),
     workspaceId,
     repositoryFingerprint,
-    graphVersion: digest(`${repositoryFingerprint}:${contentHash}:${CODEBASE_ANALYZER_VERSION}`),
+    // Filled from the finished semantic graph below. Keeping the field in the
+    // object while it is assembled makes the public contract non-optional.
+    graphVersion: '',
     analyzerVersions,
     status,
     progress: 100,
@@ -415,6 +417,7 @@ export function analyzeCodebase(
     warnings: graph.warnings,
     notices: graph.notices,
   };
+  analysis.graphVersion = computeAnalysisGraphVersion(analysis);
 
   const importEdges: Array<[string, string]> = [];
   const fileById = new Map(graph.ofType('file').map((file) => [file.id, file.path ?? '']));

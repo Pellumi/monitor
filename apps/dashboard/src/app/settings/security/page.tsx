@@ -1,6 +1,8 @@
 "use client";
 import { authenticatedFetch } from '@/lib/authenticated-fetch';
 import { useSession } from '@/components/providers';
+import { Feature } from '@tellann/shared/entitlements';
+import { useEntitlement } from '@/hooks/use-entitlement';
 
 import { useState, Suspense } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -1209,6 +1211,115 @@ function AccountDeletionContent() {
   );
 }
 
+type OidcProvider = {
+  id: string;
+  displayName: string;
+  issuerUrl: string;
+  clientId: string;
+  allowedDomains: string[];
+  providerPreset?: string | null;
+  isActive: boolean;
+};
+
+function EnterpriseSsoContent() {
+  const { selectedOrgId, memberships } = useSession();
+  const { entitlement, isLoading: entitlementLoading } = useEntitlement();
+  const membership = memberships.find((item) => item.organization.id === selectedOrgId);
+  const canManage = membership?.role === 'OWNER' || membership?.role === 'ADMIN';
+  const entitled = entitlement?.features?.[Feature.OIDC] === true;
+  const provider = useQuery<OidcProvider | null>({
+    queryKey: ['oidc-provider', selectedOrgId],
+    enabled: Boolean(selectedOrgId && entitled && canManage),
+    queryFn: async () => {
+      const response = await authenticatedFetch(`${AUTH_API}/organizations/${selectedOrgId}/oidc-provider`);
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? 'Could not load SSO configuration');
+      return body;
+    },
+  });
+  const [form, setForm] = useState({ displayName: '', issuerUrl: '', clientId: '', clientSecret: '', allowedDomains: '' });
+  const [notice, setNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      const existing = provider.data;
+      const response = await authenticatedFetch(`${AUTH_API}/organizations/${selectedOrgId}/oidc-provider`, {
+        method: existing ? 'PATCH' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          displayName: form.displayName || existing?.displayName,
+          issuerUrl: form.issuerUrl || existing?.issuerUrl,
+          clientId: form.clientId || existing?.clientId,
+          ...(form.clientSecret ? { clientSecret: form.clientSecret } : {}),
+          allowedDomains: form.allowedDomains.split(',').map((value) => value.trim().toLowerCase()).filter(Boolean),
+          providerPreset: 'custom',
+        }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.message ?? 'Could not save SSO configuration');
+      return body;
+    },
+    onSuccess: async () => {
+      setForm((current) => ({ ...current, clientSecret: '' }));
+      setNotice({ ok: true, text: 'SSO provider saved and discovery verified.' });
+      await provider.refetch();
+    },
+    onError: (error) => setNotice({ ok: false, text: error instanceof Error ? error.message : 'Could not save SSO configuration' }),
+  });
+
+  const remove = useMutation({
+    mutationFn: async () => {
+      const response = await authenticatedFetch(`${AUTH_API}/organizations/${selectedOrgId}/oidc-provider`, { method: 'DELETE' });
+      if (!response.ok) throw new Error('Could not remove SSO configuration');
+    },
+    onSuccess: async () => {
+      setNotice({ ok: true, text: 'SSO provider removed.' });
+      setForm({ displayName: '', issuerUrl: '', clientId: '', clientSecret: '', allowedDomains: '' });
+      await provider.refetch();
+    },
+    onError: (error) => setNotice({ ok: false, text: error instanceof Error ? error.message : 'Could not remove SSO configuration' }),
+  });
+
+  if (entitlementLoading) return <p className="text-sm text-neutral-500">Checking SSO access…</p>;
+  if (!entitled) return <UpgradeNotice>SSO configuration is available on Enterprise. Personal security and MFA remain available on every plan.</UpgradeNotice>;
+  if (!canManage) return <p className="text-sm text-neutral-400">Only organization owners and admins can configure SSO.</p>;
+  if (provider.isLoading) return <p className="text-sm text-neutral-500">Loading SSO configuration…</p>;
+
+  const current = provider.data;
+  const fields = [
+    ['displayName', 'Provider name', current?.displayName ?? 'Acme SSO'],
+    ['issuerUrl', 'Issuer URL', current?.issuerUrl ?? 'https://id.example.com'],
+    ['clientId', 'Client ID', current?.clientId ?? ''],
+    ['clientSecret', current ? 'New client secret (leave blank to keep current)' : 'Client secret', ''],
+    ['allowedDomains', 'Allowed email domains (comma separated)', current?.allowedDomains?.join(', ') ?? 'example.com'],
+  ] as const;
+
+  return (
+    <div className="space-y-4">
+      {current ? <p className="text-xs text-emerald-400">Active provider: {current.displayName}</p> : <p className="text-xs text-neutral-500">No provider configured.</p>}
+      <div className="grid gap-3 sm:grid-cols-2">
+        {fields.map(([key, label, placeholder]) => (
+          <label key={key} className={key === 'allowedDomains' ? 'sm:col-span-2 text-xs text-neutral-400' : 'text-xs text-neutral-400'}>
+            {label}
+            <input
+              type={key === 'clientSecret' ? 'password' : 'text'}
+              value={form[key]}
+              placeholder={placeholder}
+              onChange={(event) => setForm((value) => ({ ...value, [key]: event.target.value }))}
+              className="mt-1.5 w-full rounded-md border border-[#262626] bg-black px-3 py-2 text-sm text-white focus:border-white focus:outline-none"
+            />
+          </label>
+        ))}
+      </div>
+      {notice ? <p className={`text-xs ${notice.ok ? 'text-emerald-400' : 'text-red-400'}`}>{notice.text}</p> : null}
+      <div className="flex gap-3">
+        <Button type="button" variant="primary" disabled={save.isPending} onClick={() => save.mutate()}>{current ? 'Update provider' : 'Configure provider'}</Button>
+        {current ? <Button type="button" variant="danger" disabled={remove.isPending} onClick={() => remove.mutate()}>Remove provider</Button> : null}
+      </div>
+    </div>
+  );
+}
+
 export default function SecurityPage() {
   return (
     <SettingsPage title="Security & Sessions" description="Manage authentication, MFA, active devices, and enterprise identity controls." scope="USER">
@@ -1218,7 +1329,7 @@ export default function SecurityPage() {
       <DesktopDevicesContent />
       <AccountDeletionContent />
       <SettingsSection title="Enterprise SSO" description="SAML, OIDC, domain verification, and identity-provider policies.">
-        <UpgradeNotice>SSO configuration is available on Enterprise. Personal security and MFA remain available on every plan.</UpgradeNotice>
+        <EnterpriseSsoContent />
       </SettingsSection>
     </SettingsPage>
   );

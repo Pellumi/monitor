@@ -10,6 +10,7 @@ import { EntitlementChecker } from '@tellann/entitlement-checker';
 import { Feature, TellannEvent, Topics, Services, canonicalRoute, canonicalRouteFromPath, kafkaEnabled } from '@tellann/shared';
 import { NotificationEmailService, appUrl, buildIdempotencyKey } from '@tellann/email';
 import { createCallerGuards, type CallerRequest } from './auth';
+import { normalizeEndpointMetricValues } from './metric-values';
 
 // ─────────────────────────────────────────────────────────────
 // ClickHouse setup
@@ -118,7 +119,16 @@ async function processEvent({ message }: EachMessagePayload): Promise<void> {
       requestId?: string;
     };
 
-    if (!m.endpoint || !m.method || m.statusCode == null || m.durationMs == null) return;
+    if (!m.endpoint || !m.method) return;
+
+    const metricValues = normalizeEndpointMetricValues(m.statusCode, m.durationMs);
+    if (!metricValues) {
+      console.warn('[EndpointEngine] Ignoring API event with invalid numeric metrics', {
+        statusCode: m.statusCode,
+        durationMs: m.durationMs,
+      });
+      return;
+    }
 
     // The framework's matched template when the SDK reported one; otherwise the
     // concrete path with identifier-shaped segments collapsed. Either way the
@@ -135,8 +145,8 @@ async function processEvent({ message }: EachMessagePayload): Promise<void> {
         route,
         endpoint:       m.endpoint,
         method:         m.method.toUpperCase(),
-        status_code:    m.statusCode,
-        duration_ms:    m.durationMs,
+        status_code:    metricValues.statusCode,
+        duration_ms:    metricValues.durationMs,
         session_id:     event.sessionId ?? '',
         trace_id:       event.traceId ?? '',
         request_id:     m.requestId ?? '',

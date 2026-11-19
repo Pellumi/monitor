@@ -1689,6 +1689,79 @@ export const IPC = {
   notificationReceived: 'tellann:notifications:received',
   /** main → renderer: unread count changed. */
   notificationUnreadCount: 'tellann:notifications:unread-count',
+  notificationPreferencesList: 'tellann:notifications:preferences:list',
+  notificationPreferencesUpdate: 'tellann:notifications:preferences:update',
+  // ── Settings: org membership / audit logs / account / MFA / billing ────────
+  listMembers: 'tellann:org:members:list',
+  updateMemberRole: 'tellann:org:members:update-role',
+  removeMember: 'tellann:org:members:remove',
+  listInvitations: 'tellann:org:invitations:list',
+  createInvitation: 'tellann:org:invitations:create',
+  cancelInvitation: 'tellann:org:invitations:cancel',
+  listAuditLogs: 'tellann:org:audit-logs:list',
+  getMe: 'tellann:account:me:get',
+  updateMe: 'tellann:account:me:update',
+  uploadAvatar: 'tellann:account:avatar:upload',
+  setGeneratedAvatar: 'tellann:account:avatar:set-generated',
+  deleteAvatar: 'tellann:account:avatar:delete',
+  getPreferences: 'tellann:account:preferences:get',
+  updatePreferences: 'tellann:account:preferences:update',
+  getBillingProfile: 'tellann:billing:profile:get',
+  updateBillingProfile: 'tellann:billing:profile:update',
+  mfaStatus: 'tellann:mfa:status',
+  mfaSetup: 'tellann:mfa:setup',
+  mfaEnable: 'tellann:mfa:enable',
+  mfaSetupCancel: 'tellann:mfa:setup-cancel',
+  mfaEmailSend: 'tellann:mfa:email-send',
+  mfaEmailEnable: 'tellann:mfa:email-enable',
+  mfaDisable: 'tellann:mfa:disable',
+  listPairedDevices: 'tellann:mfa:devices:list',
+  revokePairedDevice: 'tellann:mfa:devices:revoke',
+  setPassword: 'tellann:auth:set-password',
+  // ── Billing ──────────────────────────────────────────────────────────────
+  getBillingPlans: 'tellann:billing:plans',
+  getBillingSubscription: 'tellann:billing:subscription',
+  getBillingInvoices: 'tellann:billing:invoices',
+  getTrialEligibility: 'tellann:billing:trial-eligibility',
+  startTrial: 'tellann:billing:trial-start',
+  billingCheckout: 'tellann:billing:checkout',
+  getCheckoutStatus: 'tellann:billing:checkout-status',
+  previewSubscriptionChange: 'tellann:billing:change-preview',
+  applySubscriptionChange: 'tellann:billing:change-apply',
+  cancelSubscription: 'tellann:billing:cancel',
+  resumeSubscription: 'tellann:billing:resume',
+  paymentMethodSession: 'tellann:billing:payment-method-session',
+  openCheckoutWindow: 'tellann:billing:open-checkout-window',
+  // ── Admin governance suite ───────────────────────────────────────────────
+  adminAiUsage: 'tellann:admin:ai-usage',
+  adminAiUsageDaily: 'tellann:admin:ai-usage:daily',
+  adminAiUsageBackfill: 'tellann:admin:ai-usage:backfill',
+  adminRulesets: 'tellann:admin:rulesets:list',
+  adminPromoteRuleset: 'tellann:admin:rulesets:promote',
+  adminRuleCandidates: 'tellann:admin:rule-candidates:list',
+  adminApproveCandidate: 'tellann:admin:rule-candidates:approve',
+  adminRejectCandidate: 'tellann:admin:rule-candidates:reject',
+  adminAuditLogs: 'tellann:admin:audit-logs',
+  adminQueueStatus: 'tellann:admin:queue-status',
+  // ── Analytics cluster (Graph Drift, Reconciliation, Workflows, Endpoint Analysis) ──
+  getGraphVersions: 'tellann:analytics:graph-versions',
+  getCoverageHistory: 'tellann:analytics:coverage-history',
+  getGraphVersionDiff: 'tellann:analytics:graph-version-diff',
+  getReconciliationReports: 'tellann:analytics:reconciliation:list',
+  runReconciliation: 'tellann:analytics:reconciliation:run',
+  exportReconciliation: 'tellann:analytics:reconciliation:export',
+  getWorkflows: 'tellann:analytics:workflows',
+  getLatestReport: 'tellann:analytics:latest-report',
+  getEndpointAnalysis: 'tellann:analytics:endpoint-analysis',
+  getBehavioralGraph: 'tellann:analytics:behavioral-graph',
+  listSessions: 'tellann:sessions:list',
+  listEndUsers: 'tellann:sessions:end-users',
+  getSessionTimeline: 'tellann:sessions:timeline',
+  getReplayManifest: 'tellann:sessions:replay-manifest',
+  openReplayWindow: 'tellann:sessions:open-replay-window',
+  // ── Replay window (separate, minimal preload) ───────────────────────────
+  replayReady: 'tellann:replay:ready',
+  replayEvents: 'tellann:replay:events',
 } as const;
 
 export const DesktopNotificationSchema = z.object({
@@ -1714,6 +1787,11 @@ export const DesktopSessionSchema = z.object({
     email: z.string().email(),
     displayName: z.string().nullable(),
   }).nullable(),
+  /**
+   * Read from the stored access token's own (unverified) claim — UI gating
+   * only. The server independently re-checks this on every /admin/* call.
+   */
+  isSystemAdmin: z.boolean().default(false),
 });
 
 /** A format the organisation's plan may download a quality report in. */
@@ -1994,5 +2072,416 @@ export type RepositoryMismatch = {
   /** The repository this application is bound to, when the API knows it. */
   expectedCloneUrl: string | null;
 };
+
+// ─────────────────────────────────────────────────────────────────────────
+// Settings surfaces (RBAC, audit logs, notifications preferences, profile,
+// MFA, billing). Added for desktop-native parity with the web dashboard's
+// /settings/* area — see docs/app/ for the originating review.
+// ─────────────────────────────────────────────────────────────────────────
+
+export const MemberRoleSchema = z.enum(['OWNER', 'ADMIN', 'MEMBER', 'VIEWER']);
+export type MemberRole = z.infer<typeof MemberRoleSchema>;
+
+export const OrganizationMembershipSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  role: MemberRoleSchema,
+  createdAt: z.string(),
+  user: z.object({
+    id: z.string().uuid(),
+    email: z.string().email(),
+    displayName: z.string().nullable(),
+    avatarUrl: z.string().nullable(),
+  }),
+});
+export type OrganizationMembership = z.infer<typeof OrganizationMembershipSchema>;
+
+export const PendingInvitationSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  role: MemberRoleSchema,
+  createdAt: z.string(),
+  expiresAt: z.string(),
+});
+export type PendingInvitation = z.infer<typeof PendingInvitationSchema>;
+
+/** Mirrors `EmailCategory` in packages/email/src/notification-categories.ts. */
+export const NotificationCategorySchema = z.enum([
+  'SECURITY', 'BILLING', 'COMPLIANCE', 'ACCOUNT', 'ONBOARDING', 'TEAM',
+  'REPORTS', 'ALERTS', 'DIGEST', 'PRODUCT_EDUCATION',
+]);
+export type NotificationCategory = z.infer<typeof NotificationCategorySchema>;
+
+export const NotificationFrequencySchema = z.enum(['IMMEDIATE', 'DAILY_DIGEST', 'WEEKLY_DIGEST', 'NEVER']);
+export type NotificationFrequency = z.infer<typeof NotificationFrequencySchema>;
+
+export const NotificationPreferenceSchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid(),
+  organizationId: z.string().uuid(),
+  category: NotificationCategorySchema,
+  emailEnabled: z.boolean(),
+  inAppEnabled: z.boolean(),
+  webhookEnabled: z.boolean(),
+  webPushEnabled: z.boolean(),
+  desktopEnabled: z.boolean(),
+  minSeverity: z.enum(['INFO', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  quietHoursEnabled: z.boolean(),
+  quietHoursStart: z.string().nullable(),
+  quietHoursEnd: z.string().nullable(),
+  criticalOverridesQuietHours: z.boolean(),
+  frequency: NotificationFrequencySchema,
+  capability: z.object({
+    emailSupported: z.boolean(),
+    emailLocked: z.boolean(),
+    frequencySupported: z.boolean(),
+  }),
+});
+export type NotificationPreference = z.infer<typeof NotificationPreferenceSchema>;
+
+/**
+ * `action` is kept as a plain string rather than mirroring the ~70-value
+ * `AuditAction` Prisma enum (packages/db/prisma/schema.prisma) — the display
+ * label is derived client-side via `formatEnum`, so a new server-side action
+ * never requires a desktop-contracts release to render.
+ */
+export const AuditLogEntrySchema = z.object({
+  id: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  organizationId: z.string().uuid().nullable(),
+  action: z.string(),
+  ipAddress: z.string().nullable(),
+  userAgent: z.string().nullable(),
+  metadata: z.record(z.unknown()).nullable(),
+  createdAt: z.string(),
+  user: z.object({ email: z.string().email(), displayName: z.string().nullable() }).optional(),
+});
+export type AuditLogEntry = z.infer<typeof AuditLogEntrySchema>;
+
+export const AuditLogPageSchema = z.object({
+  data: z.array(AuditLogEntrySchema),
+  total: z.number().int().nonnegative(),
+  page: z.number().int().positive(),
+  limit: z.number().int().positive(),
+});
+export type AuditLogPage = z.infer<typeof AuditLogPageSchema>;
+
+/** Mirrors the `UserPreferences` model surfaced via `GET/PUT /auth/preferences`. */
+export const UserPreferencesSchema = z.object({
+  version: z.number().int().nonnegative(),
+  theme: z.enum(['LIGHT', 'DARK', 'SYSTEM']),
+  density: z.enum(['COMFORTABLE', 'COMPACT']),
+  reducedMotion: z.boolean(),
+  highContrast: z.boolean(),
+  tablePageSize: z.union([z.literal(10), z.literal(25), z.literal(50), z.literal(100)]),
+  persistFilters: z.boolean(),
+  defaultLandingPage: z.string().nullable(),
+  rememberLastApplication: z.boolean(),
+  rememberLastEnvironment: z.boolean(),
+  reportsOpenInNewTab: z.boolean(),
+  dashboardPersona: z.string().nullable(),
+});
+export type UserPreferences = z.infer<typeof UserPreferencesSchema>;
+
+export const UserProfileSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  displayName: z.string().nullable(),
+  avatarUrl: z.string().nullable(),
+});
+export type UserProfile = z.infer<typeof UserProfileSchema>;
+
+export const BillingProfileSchema = z.object({
+  legalName: z.string().nullable(),
+  billingEmail: z.string().email().nullable(),
+  addressLine1: z.string().nullable(),
+  addressLine2: z.string().nullable(),
+  city: z.string().nullable(),
+  countryCode: z.string().nullable(),
+  taxId: z.string().nullable(),
+});
+export type BillingProfile = z.infer<typeof BillingProfileSchema>;
+
+export const MfaStatusSchema = z.object({
+  totpEnabled: z.boolean(),
+  mfaMethod: z.enum(['TOTP', 'EMAIL_OTP']).nullable(),
+  mfaEnabled: z.boolean(),
+  backupCodesRemaining: z.number().int().nonnegative(),
+  enabledAt: z.string().nullable(),
+});
+export type MfaStatus = z.infer<typeof MfaStatusSchema>;
+
+export const MfaSetupResponseSchema = z.object({
+  secret: z.string(),
+  uri: z.string(),
+  qrDataUrl: z.string(),
+});
+export type MfaSetupResponse = z.infer<typeof MfaSetupResponseSchema>;
+
+export const BackupCodesResponseSchema = z.object({
+  backupCodes: z.array(z.string()),
+  mfaMethod: z.enum(['TOTP', 'EMAIL_OTP']),
+});
+export type BackupCodesResponse = z.infer<typeof BackupCodesResponseSchema>;
+
+/**
+ * A row from `GET /auth/desktop/devices` — the paired-device list shown in
+ * Security settings. Distinct from `DesktopDeviceSchema` above (this app's
+ * own permission/device-identity model).
+ */
+export const PairedDeviceSchema = z.object({
+  id: z.string().uuid(),
+  deviceName: z.string().nullable(),
+  platform: z.string().nullable(),
+  appVersion: z.string().nullable(),
+  scopes: z.array(z.string()),
+  lastSeenAt: z.string(),
+  expiresAt: z.string(),
+  revokedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type PairedDevice = z.infer<typeof PairedDeviceSchema>;
+
+// ── Billing ─────────────────────────────────────────────────────────────
+
+export const BillingPlanTypeSchema = z.enum(['FREE', 'LOCAL', 'SOLO', 'TEAM', 'BUSINESS', 'ENTERPRISE']);
+export type BillingPlanType = z.infer<typeof BillingPlanTypeSchema>;
+
+export const BillingPlanCatalogSchema = z.object({
+  currency: z.enum(['USD', 'NGN']),
+  countryRequired: z.boolean(),
+  availableProviders: z.array(z.enum(['PAYSTACK', 'FLUTTERWAVE', 'MOCK'])),
+  canChangeInPlace: z.boolean(),
+  paymentMethod: z.object({ brand: z.string(), last4: z.string(), expMonth: z.number(), expYear: z.number() }).nullable(),
+  currentPlanType: BillingPlanTypeSchema,
+  plans: z.array(z.object({
+    type: BillingPlanTypeSchema,
+    name: z.string(),
+    monthlyPriceUsd: z.number().nullable(),
+    monthlyPriceNgn: z.number().nullable(),
+    annualPriceUsd: z.number().nullable(),
+    annualPriceNgn: z.number().nullable(),
+    eligible: z.boolean(),
+    eligibleCountries: z.array(z.string()).optional(),
+    action: z.enum(['SUBSCRIBE', 'UPGRADE', 'DOWNGRADE', 'CURRENT', 'CONTACT_SALES']),
+    allowedEffectiveModes: z.array(z.enum(['IMMEDIATE', 'NEXT_RENEWAL'])),
+  })),
+});
+export type BillingPlanCatalog = z.infer<typeof BillingPlanCatalogSchema>;
+
+export const BillingSubscriptionSchema = z.object({
+  planType: BillingPlanTypeSchema,
+  status: z.enum(['TRIAL', 'ACTIVE', 'GRACE_PERIOD', 'CANCELLED', 'EXPIRED']),
+  billingInterval: z.enum(['MONTHLY', 'ANNUAL']).nullable(),
+  currentPeriodEnd: z.string().nullable(),
+  trialEndsAt: z.string().nullable(),
+  cancelAtPeriodEnd: z.boolean(),
+});
+export type BillingSubscription = z.infer<typeof BillingSubscriptionSchema>;
+
+export const BillingInvoiceSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['PENDING', 'PAID', 'FAILED']),
+  amount: z.number(),
+  currency: z.enum(['USD', 'NGN']),
+  createdAt: z.string(),
+  paidAt: z.string().nullable(),
+});
+export type BillingInvoice = z.infer<typeof BillingInvoiceSchema>;
+
+export const CheckoutResponseSchema = z.object({
+  checkoutId: z.string(),
+  invoiceId: z.string().uuid(),
+  provider: z.enum(['PAYSTACK', 'FLUTTERWAVE', 'MOCK']),
+  checkoutUrl: z.string().url(),
+  providerReference: z.string().nullable(),
+  fallbackFrom: z.string().nullable().optional(),
+});
+export type CheckoutResponse = z.infer<typeof CheckoutResponseSchema>;
+
+export const CheckoutStatusSchema = z.object({
+  status: z.enum(['PENDING', 'PAID', 'FAILED']),
+});
+export type CheckoutStatus = z.infer<typeof CheckoutStatusSchema>;
+
+export const SubscriptionChangePreviewSchema = z.object({
+  previewId: z.string(),
+  direction: z.enum(['UPGRADE', 'DOWNGRADE', 'INTERVAL_CHANGE']),
+  amountDue: z.number(),
+  creditAmount: z.number(),
+  nextCycleAmount: z.number(),
+  expiresAt: z.string(),
+  supportedEffectiveModes: z.array(z.enum(['IMMEDIATE', 'NEXT_RENEWAL'])),
+});
+export type SubscriptionChangePreview = z.infer<typeof SubscriptionChangePreviewSchema>;
+
+// ── Analytics cluster (Graph Drift, Reconciliation, Workflows, Endpoint Analysis) ──
+
+export const GraphVersionSchema = z.object({
+  id: z.string().uuid(),
+  version: z.number().int().positive(),
+  createdAt: z.string(),
+  expectedStateCount: z.number().int().nonnegative(),
+  expectedTransitionCount: z.number().int().nonnegative(),
+  expectedCoverage: z.number().min(0).max(1),
+});
+export type GraphVersion = z.infer<typeof GraphVersionSchema>;
+
+export const CoverageHistoryPointSchema = z.object({
+  versionId: z.string().uuid(),
+  versionNumber: z.number().int().positive(),
+  snapshotDate: z.string(),
+  stateCount: z.number().int().nonnegative(),
+  transitionCount: z.number().int().nonnegative(),
+  coverageScore: z.number().min(0).max(1),
+});
+export type CoverageHistoryPoint = z.infer<typeof CoverageHistoryPointSchema>;
+
+export const GraphDiffSchema = z.object({
+  addedStates: z.array(z.string()),
+  removedStates: z.array(z.string()),
+  modifiedStates: z.array(z.object({
+    stateName: z.string(),
+    changes: z.record(z.object({ from: z.unknown(), to: z.unknown() })),
+  })),
+  addedTransitions: z.array(z.object({ fromState: z.string(), toState: z.string(), action: z.string().nullable() })),
+  removedTransitions: z.array(z.object({ fromState: z.string(), toState: z.string(), action: z.string().nullable() })),
+  summary: z.object({
+    fromVersion: z.number(),
+    toVersion: z.number(),
+    stateCountDelta: z.number(),
+    transitionCountDelta: z.number(),
+  }),
+});
+export type GraphDiff = z.infer<typeof GraphDiffSchema>;
+
+export const ReconciliationReportSchema = z.object({
+  flowId: z.string().uuid(),
+  applicationId: z.string().uuid(),
+  environmentId: z.string().uuid(),
+  flowVersionId: z.string().uuid().nullable(),
+  qaRunId: z.string().uuid().nullable(),
+  confirmedCount: z.number().int().nonnegative(),
+  trueGapCount: z.number().int().nonnegative(),
+  undeclaredCount: z.number().int().nonnegative(),
+  expectedCoverageScore: z.number().min(0).max(1),
+  trueGaps: z.array(z.object({ stateName: z.string(), provenance: z.string().nullable(), declaredById: z.string().nullable(), automatedClassification: z.string().nullable().optional() })),
+  undeclared: z.array(z.object({
+    stateName: z.string(),
+    observationCount: z.number(),
+    weightedVisits: z.number(),
+    uniqueEndUsers: z.number(),
+    errorRate: z.number(),
+    lastSeenAt: z.string(),
+    priority: z.number(),
+    isRouteInduced: z.boolean(),
+  })),
+  confirmedTransitions: z.number().int().nonnegative(),
+  trueGapTransitions: z.number().int().nonnegative(),
+  undeclaredTransitions: z.number().int().nonnegative(),
+  transitionCoverageScore: z.number().min(0).max(1),
+  trueGapTransitionsList: z.array(z.object({ fromStateId: z.string().nullable(), toStateId: z.string().nullable(), fromStateName: z.string(), toStateName: z.string(), action: z.string().nullable(), automatedClassification: z.string().nullable().optional() })),
+  undeclaredTransitionsList: z.array(z.object({ fromStateName: z.string(), toStateName: z.string(), observationCount: z.number() })),
+  generatedAt: z.string(),
+  flow: z.object({ id: z.string().uuid(), name: z.string(), status: z.string(), version: z.number(), workflowType: z.string().nullable() }),
+});
+export type ReconciliationReport = z.infer<typeof ReconciliationReportSchema>;
+
+export const WorkflowSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  path: z.array(z.string()),
+  executionCount: z.number().int().nonnegative(),
+});
+export type Workflow = z.infer<typeof WorkflowSchema>;
+
+export const EndpointAnalysisSchema = z.object({
+  applicationId: z.string().uuid(),
+  generatedAt: z.string(),
+  environmentId: z.string().uuid().nullable(),
+  runId: z.string().uuid().nullable(),
+  windowDays: z.number(),
+  requestedWindowDays: z.number(),
+  windowClampedByRetention: z.boolean(),
+  sampleCount: z.number(),
+  totalEndpoints: z.number(),
+  slowEndpoints: z.number(),
+  errorEndpoints: z.number(),
+  endpoints: z.array(z.object({
+    route: z.string(),
+    endpoint: z.string(),
+    method: z.string(),
+    requestCount: z.number(),
+    avgMs: z.number(),
+    p50Ms: z.number(),
+    p95Ms: z.number(),
+    p99Ms: z.number(),
+    errorRate: z.number(),
+    recommendation: z.string(),
+  })),
+  slowest: z.array(z.object({ route: z.string(), p95Ms: z.number() })),
+  errorProne: z.array(z.object({ route: z.string(), errorRate: z.number() })),
+});
+export type EndpointAnalysis = z.infer<typeof EndpointAnalysisSchema>;
+
+export const BehavioralGraphSchema = z.object({
+  states: z.array(z.object({ id: z.string(), name: z.string(), category: z.string().nullable(), visitCount: z.number() })),
+  transitions: z.array(z.object({ id: z.string(), fromStateId: z.string(), toStateId: z.string(), action: z.string().nullable(), frequency: z.number() })),
+  workflows: z.array(z.object({ id: z.string(), name: z.string(), path: z.array(z.string()), executionCount: z.number() })).optional(),
+});
+export type BehavioralGraph = z.infer<typeof BehavioralGraphSchema>;
+
+// ── Admin governance suite ─────────────────────────────────────────────────
+
+export const AiUsageSummarySchema = z.object({
+  totalCalls: z.number(),
+  totalInputTokens: z.number(),
+  totalOutputTokens: z.number(),
+  totalCostUsd: z.number(),
+  avgCallsPerDay: z.number(),
+  byProvider: z.array(z.object({
+    provider: z.string(),
+    calls: z.number(),
+    inputTokens: z.number(),
+    outputTokens: z.number(),
+    estimatedCostUsd: z.number(),
+  })),
+});
+export type AiUsageSummary = z.infer<typeof AiUsageSummarySchema>;
+
+export const RulesetSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['DRAFT', 'ACTIVE', 'ARCHIVED']),
+  version: z.number(),
+  applicationId: z.string().uuid().nullable(),
+  createdAt: z.string(),
+  promotedAt: z.string().nullable(),
+  promotedBy: z.string().nullable(),
+});
+export type Ruleset = z.infer<typeof RulesetSchema>;
+
+export const RuleCandidateSchema = z.object({
+  id: z.string().uuid(),
+  status: z.enum(['PENDING_REVIEW', 'APPROVED', 'REJECTED', 'PROMOTED', 'MERGED']),
+  applicationId: z.string().uuid().nullable(),
+  createdAt: z.string(),
+  summary: z.string().nullable(),
+});
+export type RuleCandidate = z.infer<typeof RuleCandidateSchema>;
+
+export const QueueStatusSchema = z.object({
+  queues: z.array(z.object({
+    name: z.string(),
+    waiting: z.number(),
+    active: z.number(),
+    completed: z.number(),
+    failed: z.number(),
+    delayed: z.number(),
+    paused: z.number(),
+  })),
+  generatedAt: z.string(),
+});
+export type QueueStatus = z.infer<typeof QueueStatusSchema>;
+
 export * from './application-architecture';
 export * from './sdk-support';

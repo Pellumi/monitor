@@ -8,6 +8,8 @@ import { desktopNavigation } from './navigation';
 import { isRunInProgress, useDesktop } from './desktop-context';
 import { SelectField } from './components/ui/select';
 import { NotificationToaster } from './components/notification-toaster';
+import { NotificationBell } from './components/notification-bell';
+import { ProfileMenu } from './components/profile-menu';
 import { UploadConsentModal } from './components/upload-consent-modal';
 import { RepositoryMismatchModal } from './components/repository-mismatch-modal';
 import { CommandPalette, type PaletteItem } from './components/command-palette';
@@ -98,6 +100,9 @@ export function AppShell() {
     ? <img className="profile-avatar" src={avatarDataUri} alt="" />
     : <span className="profile-avatar" aria-hidden="true">{initials}</span>;
   const isLiveRunPage = Boolean(location.pathname.match(/^\/applications\/[^/]+\/qa-runs\/[^/]+\/live\/?$/));
+  // Settings has its own left nav (SettingsLayout) — the primary nav rail
+  // would just be a second sidebar beside it, so it stays closed there too.
+  const isSettingsPage = location.pathname.startsWith('/settings');
   // Only a run still recording holds anything: a finished one is history.
   const runInProgress = isRunInProgress(activeRun) ? activeRun : null;
   const runApplicationId = runInProgress?.applicationId ?? null;
@@ -105,7 +110,7 @@ export function AppShell() {
   const liveRunPath = runInProgress
     ? `/applications/${runInProgress.applicationId}/qa-runs/${runInProgress.runId}/live`
     : null;
-  const activeSidebarMode = isLiveRunPage ? 'closed' : sidebarMode;
+  const activeSidebarMode = isLiveRunPage || isSettingsPage ? 'closed' : sidebarMode;
   const effectiveSidebarWidth = activeSidebarMode === 'closed' ? 0 : activeSidebarMode === 'icon' ? ICON_SIDEBAR_WIDTH : sidebarWidth;
   const lastProjectId = projectId ?? localStorage.getItem('tellann:last-project') ?? applications[0]?.id;
 
@@ -298,18 +303,6 @@ export function AppShell() {
     if (confirmed) await signOut();
   }, [signOut, userEmail]);
 
-  const openProfileMenu = async (event: MouseEvent) => {
-    const choice = await showMenu(event, [
-      { id: 'profile', label: 'Profile settings', accelerator: 'Ctrl+,' },
-      { id: 'docs', label: 'Documentation' },
-      { type: 'separator' },
-      { id: 'sign-out', label: 'Sign out…' },
-    ]);
-    if (choice === 'profile') void window.tellann?.system.openProfile();
-    if (choice === 'docs') void window.tellann?.system.openExternal('https://docs.tellann.co');
-    if (choice === 'sign-out') void requestSignOut();
-  };
-
   const openSidebarMenu = async (event: MouseEvent) => {
     const choice = await showMenu(event, [
       { id: 'full', label: 'Show labels', enabled: sidebarMode !== 'full' },
@@ -341,12 +334,12 @@ export function AppShell() {
         setPaletteOpen((open) => !open);
       } else if (key === 'b') {
         event.preventDefault();
-        if (!isLiveRunPage) {
+        if (!isLiveRunPage && !isSettingsPage) {
           toggleSidebar();
         }
       } else if (key === ',') {
         event.preventDefault();
-        void window.tellann?.system.openProfile();
+        navigate('/settings/profile');
       } else if (key === 'n') {
         event.preventDefault();
         navigate(projectId ? `/applications/${projectId}/qa-runs/new` : '/applications/new');
@@ -365,7 +358,7 @@ export function AppShell() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [navigate, projectId, refresh, toggleSidebar, isLiveRunPage]);
+  }, [navigate, projectId, refresh, toggleSidebar, isLiveRunPage, isSettingsPage]);
 
   const beginResize = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (activeSidebarMode !== 'full') return;
@@ -437,15 +430,27 @@ export function AppShell() {
       keywords: item.organizationName,
       run: () => changeProject(item.id),
     })),
+    { id: 'nav-graph-drift', group: 'Go to', label: 'Graph Drift', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/graph-drift`) },
+    { id: 'nav-reconciliation', group: 'Go to', label: 'Reconciliation', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/reconciliation`) },
+    { id: 'nav-workflows', group: 'Go to', label: 'Workflows', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/workflows`) },
+    { id: 'nav-missing', group: 'Go to', label: 'Missing States & Flows', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/missing-flows`) },
+    { id: 'nav-endpoints', group: 'Go to', label: 'Endpoint Analysis', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/endpoints`) },
+    { id: 'nav-sessions', group: 'Go to', label: 'Sessions', icon: Settings, disabled: !projectId, run: () => navigate(`/applications/${projectId}/sessions`) },
     { id: 'new-run', group: 'Commands', label: 'New QA run', icon: Play, shortcut: 'Ctrl+N', disabled: !projectId, run: () => navigate(`/applications/${projectId}/qa-runs/new`) },
     { id: 'new-app', group: 'Commands', label: 'Create application', icon: Plus, run: () => navigate('/applications/new') },
     { id: 'attach', group: 'Commands', label: 'Attach project folder…', icon: FolderPlus, disabled: !projectId, run: () => { if (projectId) void attachWorkspace(projectId).catch(() => undefined); } },
     { id: 'refresh', group: 'Commands', label: 'Refresh', icon: RefreshCw, shortcut: 'F5', run: refresh },
-    { id: 'sidebar', group: 'Commands', label: 'Toggle sidebar', icon: PanelLeft, shortcut: 'Ctrl+B', disabled: isLiveRunPage, run: toggleSidebar },
-    { id: 'profile', group: 'Commands', label: 'Profile settings', icon: Settings, shortcut: 'Ctrl+,', run: () => void window.tellann?.system.openProfile() },
+    { id: 'sidebar', group: 'Commands', label: 'Toggle sidebar', icon: PanelLeft, shortcut: 'Ctrl+B', disabled: isLiveRunPage || isSettingsPage, run: toggleSidebar },
+    { id: 'settings-profile', group: 'Settings', label: 'Profile', icon: Settings, shortcut: 'Ctrl+,', run: () => navigate('/settings/profile') },
+    { id: 'settings-security', group: 'Settings', label: 'Security & MFA', icon: ShieldCheck, run: () => navigate('/settings/security') },
+    { id: 'settings-notifications', group: 'Settings', label: 'Notifications', icon: Settings, run: () => navigate('/settings/notifications') },
+    { id: 'settings-members', group: 'Settings', label: 'Team & Members', icon: Settings, run: () => navigate('/settings/members') },
+    { id: 'settings-billing', group: 'Settings', label: 'Billing', icon: Settings, run: () => navigate('/settings/billing') },
+    { id: 'settings-audit-logs', group: 'Settings', label: 'Audit Logs', icon: Settings, run: () => navigate('/settings/audit-logs') },
+    ...(session?.isSystemAdmin ? [{ id: 'settings-admin', group: 'Settings', label: 'Admin', icon: Settings, run: () => navigate('/settings/admin') }] : []),
     { id: 'docs', group: 'Commands', label: 'Documentation', icon: BookOpenText, run: () => void window.tellann?.system.openExternal('https://docs.tellann.co') },
     { id: 'sign-out', group: 'Commands', label: 'Sign out…', icon: LogOut, run: () => void requestSignOut() },
-  ], [applications, attachWorkspace, changeProject, navigate, projectId, refresh, requestSignOut, toggleSidebar, isLiveRunPage]);
+  ], [applications, attachWorkspace, changeProject, navigate, projectId, refresh, requestSignOut, toggleSidebar, isLiveRunPage, isSettingsPage, session?.isSystemAdmin]);
 
   const runStatusLabel = activeRun ? `QA run ${formatEnum(activeRun.status).toLowerCase()}` : 'Ready';
 
@@ -465,7 +470,7 @@ export function AppShell() {
           <button className="titlebar-button" type="button" onClick={() => navigate(1)} disabled={historyBounds.index >= historyBounds.max} title="Forward (Alt+Right)" aria-label="Forward">
             <ArrowRight size={16} />
           </button>
-          <button className="titlebar-button" type="button" disabled={isLiveRunPage} onClick={toggleSidebar} onContextMenu={(event) => void openSidebarMenu(event)} title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-pressed={activeSidebarMode === 'full'}>
+          <button className="titlebar-button" type="button" disabled={isLiveRunPage || isSettingsPage} onClick={toggleSidebar} onContextMenu={(event) => void openSidebarMenu(event)} title="Toggle sidebar (Ctrl+B)" aria-label="Toggle sidebar" aria-pressed={activeSidebarMode === 'full'}>
             <PanelLeft size={16} />
           </button>
         </div>
@@ -503,6 +508,7 @@ export function AppShell() {
           <span>Search Tellann</span>
           <kbd>Ctrl+K</kbd>
         </button>
+        <NotificationBell />
         <div className="titlebar-drag" />
       </header>
 
@@ -526,22 +532,13 @@ export function AppShell() {
               </NavLink>
             ))}
           </nav>
-          <div className="sidebar-profile">
-            <button
-              className="profile-trigger"
-              type="button"
-              aria-haspopup="menu"
-              title={userEmail ? `${userName} (${userEmail})` : userName}
-              onClick={(event) => void openProfileMenu(event)}
-              onContextMenu={(event) => void openProfileMenu(event)}
-            >
-              {avatarNode}
-              <span className="profile-trigger-name">
-                <strong>{userName}</strong>
-                {userEmail ? <small>{userEmail}</small> : null}
-              </span>
-            </button>
-          </div>
+          <ProfileMenu
+            avatarNode={avatarNode}
+            userName={userName}
+            userEmail={userEmail}
+            isSystemAdmin={session?.isSystemAdmin}
+            onSignOut={() => void requestSignOut()}
+          />
 
           {activeSidebarMode === 'full' ? <div className="sidebar-resize-handle" role="separator" aria-label="Resize sidebar" aria-orientation="vertical" onPointerDown={beginResize} onDoubleClick={() => { setSidebarWidth(DEFAULT_SIDEBAR_WIDTH); localStorage.setItem('tellann:sidebar-width', String(DEFAULT_SIDEBAR_WIDTH)); }} /> : null}
         </aside>
